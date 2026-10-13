@@ -216,6 +216,11 @@ impl App {
                 );
                 self.image_size = size;
                 self.texture = Some(texture);
+                // Поле «Путь» — это ввод «что открыть», а не показ текущего
+                // файла. Если оставить в нём путь, следующее нажатие «Открыть»
+                // просто перезагрузит ту же картинку и до диалога не дойдёт.
+                // Открытый файл и так показан в блоке «Изображение».
+                self.open_path.clear();
                 self.json_path = json_io::default_json_path(Some(path));
                 self.fit_pending = true;
                 self.session
@@ -491,7 +496,7 @@ impl App {
         let text = path.to_string_lossy().into_owned();
         match request {
             Request::Image { .. } => {
-                self.open_path = text;
+                // Путь подставит `load_image`, если загрузка удалась.
                 self.load_image(ctx, path);
             }
             Request::Annotations { .. } => {
@@ -961,7 +966,10 @@ mod tests {
 
         assert!(app.has_image(), "картинка должна быть загружена");
         assert_eq!(app.image_path.as_deref(), Some(image_path.as_path()));
-        assert_eq!(app.open_path, image_path.to_string_lossy());
+        assert!(
+            app.open_path.is_empty(),
+            "после загрузки поле ввода должно быть пустым"
+        );
         assert!(
             app.session.message().is_some_and(|m| !m.is_error),
             "загрузка через диалог не должна считаться ошибкой"
@@ -1121,6 +1129,41 @@ mod tests {
             .expect("пустое поле должно вызывать диалог выбора картинки");
         assert!(matches!(request, Request::Image { .. }), "{request:?}");
         assert!(!app.session.message().is_some_and(|m| m.is_error));
+    }
+
+    #[test]
+    fn opening_another_picture_asks_again() {
+        // Регрессия: после первой загрузки поле «Путь» оставалось заполненным,
+        // и «Открыть» навсегда входила в режим «перезагрузить тот же файл» —
+        // портал больше не вызывался, вторая картинка не открывалась.
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("one.png");
+        let second = dir.path().join("two.png");
+        sample_png(&first);
+        sample_png(&second);
+
+        let mut app = test_app_with(Box::new(Canned::Chosen(first.clone())));
+        app.ask_image();
+        answer_dialog(&mut app);
+        assert!(app.has_image());
+        assert_eq!(app.image_path.as_deref(), Some(first.as_path()));
+        assert!(
+            app.open_path.is_empty(),
+            "поле ввода должно снова опустеть, иначе портал больше не спросит"
+        );
+
+        app.open_image();
+        assert!(
+            matches!(app.dialogs.pending_request(), Some(Request::Image { .. })),
+            "вторая картинка должна открываться через диалог"
+        );
+        answer_dialog(&mut app);
+
+        // И через аргумент командной строки тоже.
+        app.pending_image = Some(second.clone());
+        app.render_headless();
+        assert_eq!(app.image_path.as_deref(), Some(second.as_path()));
+        assert!(app.open_path.is_empty());
     }
 
     #[test]

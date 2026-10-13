@@ -111,6 +111,17 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # GPL требует, чтобы вместе с бинарником шёл соответствующий исходный
+      # код, поэтому архив исходников едет отдельным вложением релиза.
+      - name: Собрать исходники
+        shell: bash
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          git archive --format=tar.gz --prefix=picture-measure-$version/ \
+            -o "dist/picture-measure-$version-source.tar.gz" "$TAG"
+          tar -tzf "dist/picture-measure-$version-source.tar.gz" | head -5
       - name: Посчитать суммы
         shell: bash
         run: |
@@ -153,8 +164,8 @@ jobs:
           cd dist
           ls -1 *.tar.gz *.zip
           count=$(ls -1 *.tar.gz *.zip | wc -l)
-          if [ "$count" -ne 5 ]; then
-            echo "Ожидалось 5 сборок, а получилось $count" >&2
+          if [ "$count" -ne 6 ]; then
+            echo "Ожидалось 5 сборок и архив исходников, получилось $count" >&2
             exit 1
           fi
 
@@ -174,8 +185,11 @@ jobs:
             echo "| \`picture-measure-windows-x86_64.zip\` | Windows 64-бит |"
             echo "| \`picture-measure-macos-aarch64.tar.gz\` | macOS, Apple Silicon |"
             echo "| \`picture-measure-macos-x86_64.tar.gz\` | macOS, Intel |"
+            echo "| \`picture-measure-<версия>-source.tar.gz\` | исходный код |"
             echo
             echo "Контрольные суммы SHA-256 — в \`checksums.txt\`."
+            echo
+            echo "Программа распространяется по GPL-3.0-or-later; исходный код прилагается."
             echo
             echo "### Как пользоваться"
             echo

@@ -48,7 +48,7 @@ RUSTFLAGS := $(if $(filter 1,$(STRIP)),-C strip=symbols,)
 endif
 
 .PHONY: all build release debug run test test-verbose check fmt fmt-check clippy lint \
-        doc desktop-check install uninstall icons \
+        doc desktop-check install uninstall icons source \
         dist package clean clean-all help list
 
 ## all: собрать релизную версию (по умолчанию)
@@ -140,6 +140,14 @@ uninstall:
 	@command -v update-desktop-database >/dev/null 2>&1 && \
 	    update-desktop-database $(DESTDIR)$(APPDIR) 2>/dev/null || true
 	@echo "  Готово"
+
+## source: собрать тарбол с исходниками (требование GPL к бинарникам)
+source:
+	@mkdir -p dist
+	@git archive --format=tar.gz --prefix=picture-measure-$(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)/ \
+	    -o dist/picture-measure-$(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)-source.tar.gz HEAD \
+	    || echo "Нет коммитов: соберите тарбол из рабочей копии вручную"
+	@ls -lh dist/*-source.tar.gz 2>/dev/null || true
 
 ## package: собрать .deb, .rpm и AppImage-подобный архив в dist/
 package dist: build

@@ -22,7 +22,6 @@ use crate::model::{Annotation, AnnotationSet, Geometry, ShapeKind};
 use crate::model::{POINT_COLOR, RECT_COLOR, SELECTION_COLOR};
 use egui::Color32;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use std::path::Path;
 
 /// Value of the `format` field written by this program.
@@ -263,41 +262,11 @@ fn default_version() -> u32 {
     FORMAT_VERSION
 }
 
-/// Everything that can go wrong while reading or writing annotations.
-#[derive(Debug)]
-pub enum JsonError {
-    /// The text is not valid JSON.
-    Syntax(serde_json::Error),
-    /// The JSON is valid but does not describe an annotation file.
-    Structure(String),
-    /// A specific figure could not be converted.
-    Figure {
-        /// Zero-based index inside the `annotations` array.
-        index: usize,
-        /// Human-readable reason.
-        reason: String,
-    },
-}
-
-impl fmt::Display for JsonError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Syntax(e) => write!(f, "некорректный JSON: {e}"),
-            Self::Structure(m) => write!(f, "неподдерживаемая структура файла: {m}"),
-            Self::Figure { index, reason } => {
-                write!(f, "фигура №{index}: {reason}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for JsonError {}
-
-impl From<serde_json::Error> for JsonError {
-    fn from(value: serde_json::Error) -> Self {
-        Self::Syntax(value)
-    }
-}
+/// Everything that can go wrong while reading or writing an annotation file.
+///
+/// Re-exported from [`crate::error`] so that the two languages can be chosen
+/// per call site.
+pub use crate::error::{Error as JsonError, Problem, Structure};
 
 impl AnnotationEntry {
     /// Converts a runtime annotation into a file entry.
@@ -346,30 +315,47 @@ impl AnnotationEntry {
             })
             .ok_or_else(|| JsonError::Figure {
                 index,
-                reason: match self.kind.as_deref() {
-                    Some(other) => format!(
-                        "неизвестный тип фигуры \"{other}\" (ожидается \"point\" или \"rect\")"
-                    ),
-                    None => "не указан тип фигуры (ожидается \"point\" или \"rect\")".to_owned(),
+                problem: match self.kind.as_deref() {
+                    Some(other) => Problem::TypeUnknown {
+                        given: other.to_owned(),
+                    },
+                    None => Problem::TypeMissing,
                 },
             })?;
 
         let geometry = match kind {
-            ShapeKind::Point => Geometry::Point(egui::pos2(x, y)),
+            ShapeKind::Point => {
+                if !x.is_finite() || !y.is_finite() {
+                    return Err(JsonError::Figure {
+                        index,
+                        problem: Problem::CoordinateNotFinite,
+                    });
+                }
+                Geometry::Point(egui::pos2(x, y))
+            }
             ShapeKind::Rect => {
-                let width = self.width.ok_or_else(|| JsonError::Figure {
+                let width = self.width.ok_or(JsonError::Figure {
                     index,
-                    reason: "у прямоугольника отсутствует поле \"width\"".to_owned(),
+                    problem: Problem::MissingWidth,
                 })?;
-                let height = self.height.ok_or_else(|| JsonError::Figure {
+                let height = self.height.ok_or(JsonError::Figure {
                     index,
-                    reason: "у прямоугольника отсутствует поле \"height\"".to_owned(),
+                    problem: Problem::MissingHeight,
                 })?;
                 let (w, h) = (width.as_f32(), height.as_f32());
                 if w < 0.0 || h < 0.0 {
                     return Err(JsonError::Figure {
                         index,
-                        reason: format!("отрицательный размер прямоугольника ({w}, {h})"),
+                        problem: Problem::NegativeSize {
+                            width: w,
+                            height: h,
+                        },
+                    });
+                }
+                if !x.is_finite() || !y.is_finite() || !w.is_finite() || !h.is_finite() {
+                    return Err(JsonError::Figure {
+                        index,
+                        problem: Problem::CoordinateNotFinite,
                     });
                 }
                 Geometry::Rect(Rect::from_xywh(x, y, w, h))
@@ -416,7 +402,7 @@ pub fn to_string_pretty(
     precision: u32,
 ) -> Result<String, JsonError> {
     let file = build_file(set, image, precision);
-    serde_json::to_string_pretty(&file).map_err(JsonError::Syntax)
+    serde_json::to_string_pretty(&file).map_err(JsonError::syntax)
 }
 
 /// Serialises an annotation set to compact, single-line JSON.
@@ -426,7 +412,7 @@ pub fn to_string_compact(
     precision: u32,
 ) -> Result<String, JsonError> {
     let file = build_file(set, image, precision);
-    serde_json::to_string(&file).map_err(JsonError::Syntax)
+    serde_json::to_string(&file).map_err(JsonError::syntax)
 }
 
 /// Parses an annotation file.
@@ -436,32 +422,47 @@ pub fn to_string_compact(
 pub fn from_str(text: &str) -> Result<AnnotationSet, JsonError> {
     let value: serde_json::Value = serde_json::from_str(text)?;
     let entries: Vec<AnnotationEntry> = match value {
-        serde_json::Value::Array(items) => serde_json::from_value(serde_json::Value::Array(items))?,
-        serde_json::Value::Object(mut map) => {
-            let annotations = map.remove("annotations");
-            match annotations {
-                Some(serde_json::Value::Array(items)) => {
-                    serde_json::from_value(serde_json::Value::Array(items))?
-                }
-                Some(other) => {
-                    return Err(JsonError::Structure(format!(
-                        "поле \"annotations\" должно быть массивом, получено {other}"
-                    )));
-                }
-                None => {
-                    return Err(JsonError::Structure(
-                        "в объекте нет поля \"annotations\"".to_owned(),
-                    ));
-                }
+        serde_json::Value::Array(items) => entries_from_value(serde_json::Value::Array(items))?,
+        serde_json::Value::Object(mut map) => match map.remove("annotations") {
+            Some(serde_json::Value::Array(items)) => {
+                entries_from_value(serde_json::Value::Array(items))?
             }
-        }
-        other => {
-            return Err(JsonError::Structure(format!(
-                "ожидался объект или массив, получено {other}"
-            )));
+            Some(_) => {
+                return Err(JsonError::Structure {
+                    problem: Structure::AnnotationsNotAnArray,
+                });
+            }
+            None => {
+                return Err(JsonError::Structure {
+                    problem: Structure::AnnotationsMissing,
+                });
+            }
+        },
+        _ => {
+            return Err(JsonError::Structure {
+                problem: Structure::NotAContainer,
+            });
         }
     };
     from_entries(&entries)
+}
+
+/// Parses the `annotations` array, rejecting elements that are not objects.
+fn entries_from_value(value: serde_json::Value) -> Result<Vec<AnnotationEntry>, JsonError> {
+    let serde_json::Value::Array(items) = value else {
+        return Err(JsonError::Structure {
+            problem: Structure::AnnotationsNotAnArray,
+        });
+    };
+    for (index, item) in items.iter().enumerate() {
+        if !item.is_object() {
+            return Err(JsonError::Figure {
+                index,
+                problem: Problem::TypeMissing,
+            });
+        }
+    }
+    serde_json::from_value(serde_json::Value::Array(items)).map_err(JsonError::from)
 }
 
 /// Converts already-parsed entries into an annotation set.
@@ -677,37 +678,111 @@ mod tests {
 
     #[test]
     fn rectangles_must_have_a_size() {
-        let err = from_str(r#"[{"type":"rect","name":"x","x":0,"y":0}]"#).unwrap_err();
-        assert!(matches!(err, JsonError::Figure { index: 0, .. }), "{err:?}");
-        assert!(err.to_string().contains("width"), "{err}");
-
-        let err = from_str(r#"[{"type":"rect","name":"x","x":0,"y":0,"width":3}]"#).unwrap_err();
-        assert!(err.to_string().contains("height"), "{err}");
+        assert_eq!(
+            from_str(r#"[{"type":"rect","name":"x","x":0,"y":0}]"#).unwrap_err(),
+            JsonError::Figure {
+                index: 0,
+                problem: Problem::MissingWidth
+            }
+        );
+        assert_eq!(
+            from_str(r#"[{"type":"rect","name":"x","x":0,"y":0,"width":3}]"#).unwrap_err(),
+            JsonError::Figure {
+                index: 0,
+                problem: Problem::MissingHeight
+            }
+        );
     }
 
     #[test]
     fn unknown_type_is_reported() {
-        let err = from_str(r#"[{"type":"polygon","x":0,"y":0}]"#).unwrap_err();
-        assert!(err.to_string().contains("неизвестный тип"), "{err}");
-        let err = from_str(r#"[{"x":0,"y":0}]"#).unwrap_err();
-        assert!(err.to_string().contains("не указан тип"), "{err}");
+        let error = from_str(r#"[{"type":"polygon","x":0,"y":0}]"#).unwrap_err();
+        assert_eq!(
+            error,
+            JsonError::Figure {
+                index: 0,
+                problem: Problem::TypeUnknown {
+                    given: "polygon".to_owned()
+                }
+            }
+        );
+        assert_eq!(
+            from_str(r#"[{"x":0,"y":0}]"#).unwrap_err(),
+            JsonError::Figure {
+                index: 0,
+                problem: Problem::TypeMissing
+            }
+        );
+    }
+
+    #[test]
+    fn non_finite_coordinates_are_rejected() {
+        // JSON не умеет NaN и бесконечности, поэтому проверяем разбор вручную.
+        let entry: AnnotationEntry =
+            serde_json::from_str(r#"{"type":"rect","x":0,"y":0,"width":1,"height":1}"#).unwrap();
+        let mut broken = entry.clone();
+        broken.x = Number::Float(f64::NAN);
+        assert_eq!(
+            broken.to_annotation(1, 0).unwrap_err(),
+            JsonError::Figure {
+                index: 0,
+                problem: Problem::CoordinateNotFinite
+            }
+        );
+        let mut broken = entry;
+        broken.height = Some(Number::Float(f64::INFINITY));
+        assert_eq!(
+            broken.to_annotation(1, 0).unwrap_err(),
+            JsonError::Figure {
+                index: 0,
+                problem: Problem::CoordinateNotFinite
+            }
+        );
     }
 
     #[test]
     fn negative_size_is_reported() {
-        let err = from_str(r#"[{"type":"rect","x":0,"y":0,"width":-3,"height":4}]"#).unwrap_err();
-        assert!(err.to_string().contains("отрицательный"), "{err}");
+        assert_eq!(
+            from_str(r#"[{"type":"rect","x":0,"y":0,"width":-3,"height":4}]"#).unwrap_err(),
+            JsonError::Figure {
+                index: 0,
+                problem: Problem::NegativeSize {
+                    width: -3.0,
+                    height: 4.0
+                }
+            }
+        );
     }
 
     #[test]
     fn broken_documents_are_reported() {
-        assert!(matches!(from_str("{"), Err(JsonError::Syntax(_))));
-        assert!(matches!(from_str("42"), Err(JsonError::Structure(_))));
-        assert!(matches!(from_str("{}"), Err(JsonError::Structure(_))));
-        assert!(matches!(
-            from_str(r#"{"annotations": 5}"#),
-            Err(JsonError::Structure(_))
-        ));
+        assert!(matches!(from_str("{"), Err(JsonError::Syntax { .. })));
+        assert_eq!(
+            from_str("42").unwrap_err(),
+            JsonError::Structure {
+                problem: Structure::NotAContainer
+            }
+        );
+        assert_eq!(
+            from_str("{}").unwrap_err(),
+            JsonError::Structure {
+                problem: Structure::AnnotationsMissing
+            }
+        );
+        assert_eq!(
+            from_str(r#"{"annotations": 5}"#).unwrap_err(),
+            JsonError::Structure {
+                problem: Structure::AnnotationsNotAnArray
+            }
+        );
+        assert_eq!(
+            from_str("[1, 2]").unwrap_err(),
+            JsonError::Figure {
+                index: 0,
+                problem: Problem::TypeMissing
+            },
+            "элемент массива должен быть объектом"
+        );
     }
 
     #[test]

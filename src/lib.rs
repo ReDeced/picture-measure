@@ -6,6 +6,8 @@
 //! The crate is split so that everything that can be unit-tested lives in the
 //! library, while the `eframe`/`egui` shell lives in the binary crate:
 //!
+//! * [`i18n`] — the Russian and English interface strings.
+//! * [`error`] — structured, per-language error messages.
 //! * [`geometry`] — axis-aligned rectangles and vector math.
 //! * [`model`] — points, rectangles, annotations and the annotation set.
 //! * [`view`] — the pan/zoom transform between screen and image coordinates.
@@ -24,8 +26,13 @@
 #![allow(unknown_lints)]
 #![allow(clippy::assert_is_empty)]
 
+// clippy::doc_markdown ругается на `Error::Figure` и `picture_measure::i18n`
+// в примере модуля; имена типов в doctest оборачивать в кавычки не хочется.
+#[allow(clippy::doc_markdown)]
+pub mod error;
 pub mod geometry;
 pub mod history;
+pub mod i18n;
 pub mod json_io;
 pub mod model;
 pub mod pointer;

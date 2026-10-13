@@ -1,10 +1,13 @@
 //! The surrounding chrome: toolbar, side panel, status bar and the frame loop.
 
-use super::app::{ACCENT, App, bare_key, mono, pasted_text, shortcut, status_hint, swatch};
+#[cfg(test)]
+use super::app::test_app;
+use super::app::{ACCENT, App, bare_key, mono, pasted_text, shortcut, swatch};
 use super::canvas;
 use egui::{Align, Align2, Color32, Context, Key, Layout, RichText, TextEdit, Ui, vec2};
+use picture_measure::i18n::{Lang, fill};
 use picture_measure::json_io::{self, palette};
-use picture_measure::model::{Geometry, ShapeId, ShapeKind};
+use picture_measure::model::{Annotation, Geometry, ShapeId, ShapeKind};
 use picture_measure::session::Session;
 use picture_measure::tools::Tool;
 use std::path::PathBuf;
@@ -88,7 +91,9 @@ fn handle_dropped_files(app: &mut App, ctx: &Context) {
         } else if json_io::is_image_path(&path) {
             app.pending_image = Some(path);
         } else {
-            app.notify_error(format!("Не удалось определить формат: {}", path.display()));
+            let template = app.t().unknown_format;
+            let path = path.display().to_string();
+            app.complain(template, &[("path", &path)]);
         }
     }
 }
@@ -98,52 +103,68 @@ fn handle_dropped_files(app: &mut App, ctx: &Context) {
 // ----------------------------------------------------------------------
 
 fn top_bar(app: &mut App, ui: &mut Ui) {
+    let t = app.t();
     egui::Panel::top("toolbar").exact_size(74.0).show(ui, |ui| {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
-                if ui.button("📂 Открыть").clicked() {
+                if ui.button(t.open).clicked() {
                     let path = app.open_path.trim().to_owned();
                     if path.is_empty() {
-                        app.notify_error("Введите путь к изображению на панели слева");
+                        let message = t.need_image_path.to_owned();
+                        app.notify_error(message);
                     } else {
                         app.pending_image = Some(PathBuf::from(path));
                     }
                 }
-                if ui.button("🗑 Очистить").clicked() {
+                if ui.button(t.clear_all).clicked() {
                     app.session.clear_all();
                 }
                 ui.separator();
-                if ui.button("💾 Сохранить JSON").clicked() {
+                if ui.button(t.save_json).clicked() {
                     app.save_json();
                 }
-                if ui.button("📋 Копировать JSON").clicked() {
+                if ui.button(t.copy_json).clicked() {
                     app.copy_json(ui.ctx(), true);
                 }
                 ui.separator();
                 ui.add_enabled_ui(app.session.can_undo(), |ui| {
-                    if ui.button("↶ Отменить").clicked() {
+                    if ui.button(t.undo).clicked() {
                         app.session.undo();
                     }
                 });
                 ui.add_enabled_ui(app.session.can_redo(), |ui| {
-                    if ui.button("↷ Повторить").clicked() {
+                    if ui.button(t.redo).clicked() {
                         app.session.redo();
+                    }
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(format!("v{}", picture_measure::version()));
+                    if app.session.is_dirty() {
+                        ui.label(RichText::new(t.unsaved).color(Color32::from_rgb(255, 170, 90)));
                     }
                 });
             });
             ui.horizontal(|ui| {
-                ui.label("Инструмент:");
+                ui.label(t.tool_label);
                 let current = app.session.tool();
                 for tool in Tool::ALL {
-                    let button = egui::Button::new(tool.label())
+                    let button = egui::Button::new(tool.label(app.lang))
                         .selected(current == tool)
                         .shortcut_text(hotkey_label(tool.hotkey()));
-                    if ui.add(button).on_hover_text(tool.description()).clicked() {
+                    if ui
+                        .add(button)
+                        .on_hover_text(tool.description(app.lang))
+                        .clicked()
+                    {
                         app.session.set_tool(tool);
                     }
                 }
                 ui.separator();
-                if ui.button("⤢ Вписать").on_hover_text("F").clicked() {
+                if ui
+                    .button(t.fit)
+                    .on_hover_text(hotkey_label(Key::F))
+                    .clicked()
+                {
                     app.fit_view();
                 }
                 if ui.button("100%").clicked() {
@@ -154,15 +175,6 @@ fn top_bar(app: &mut App, ui: &mut Ui) {
                         .monospace()
                         .strong(),
                 );
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if app.session.is_dirty() {
-                        ui.label(
-                            RichText::new("● есть изменения")
-                                .color(Color32::from_rgb(255, 170, 90)),
-                        );
-                    }
-                    ui.label(format!("v{}", picture_measure::version()));
-                });
             });
         });
     });
@@ -194,9 +206,10 @@ fn side_panel(app: &mut App, ui: &mut Ui) {
 }
 
 fn section_image(app: &mut App, ui: &mut Ui) {
-    group(ui, "Изображение");
+    let t = app.t();
+    group(ui, t.section_image);
     if app.image_name.is_empty() {
-        ui.label(RichText::new("не открыто").italics());
+        ui.label(RichText::new(t.no_image).italics());
     } else {
         ui.label(RichText::new(&app.image_name).strong());
         ui.label(format!(
@@ -213,50 +226,49 @@ fn section_image(app: &mut App, ui: &mut Ui) {
         }
     }
     ui.horizontal(|ui| {
-        ui.label("Путь:");
+        ui.label(t.path);
         ui.add(
             TextEdit::singleline(&mut app.open_path)
                 .desired_width((ui.available_width() - 46.0).max(60.0))
-                .hint_text("/путь/к/картинке.png"),
+                .hint_text(t.path_hint),
         );
     });
     ui.horizontal(|ui| {
-        if ui.button("Открыть").clicked() {
+        if ui.button(t.load).clicked() {
             let path = app.open_path.trim().to_owned();
             if path.is_empty() {
-                app.notify_error("Введите путь к изображению");
+                let message = t.need_image_path.to_owned();
+                app.notify_error(message);
             } else {
                 app.pending_image = Some(PathBuf::from(path));
             }
         }
-        if ui.button("Вставить").clicked() {
+        if ui.button(t.paste).clicked() {
             if let Some(text) = pasted_text(ui.ctx()) {
                 text.trim().clone_into(&mut app.open_path);
                 if !app.open_path.is_empty() {
                     app.pending_image = Some(PathBuf::from(app.open_path.clone()));
                 }
             } else {
-                app.notify_error("В буфере обмена нет текста");
+                let message = t.no_clipboard.to_owned();
+                app.notify_error(message);
             }
         }
     });
-    ui.label(
-        RichText::new("Можно просто перетащить файл в окно")
-            .small()
-            .weak(),
-    );
+    ui.label(RichText::new(t.drag_hint).small().weak());
 }
 
 fn section_new_folder(app: &mut App, ui: &mut Ui) {
-    group(ui, "Новые фигуры");
+    let t = app.t();
+    group(ui, t.section_new_figures);
     ui.horizontal(|ui| {
-        ui.label("Подпапка:");
+        ui.label(t.subfolder);
         let mut folder = app.session.new_folder().to_owned();
         if ui
             .add(
                 TextEdit::singleline(&mut folder)
                     .desired_width((ui.available_width() - 84.0).max(60.0))
-                    .hint_text("например eyes"),
+                    .hint_text(t.subfolder_hint),
             )
             .changed()
         {
@@ -265,14 +277,14 @@ fn section_new_folder(app: &mut App, ui: &mut Ui) {
     });
     let folders = app.session.set().folders();
     if folders.is_empty() {
-        ui.label(RichText::new("Подпапок пока нет").small().weak());
+        ui.label(RichText::new(t.no_folders).small().weak());
     } else {
         let current = app.session.new_folder().to_owned();
         ui.horizontal_wrapped(|ui| {
             for folder in folders {
                 if ui
                     .selectable_label(current == folder, folder.clone())
-                    .on_hover_text("Все новые фигуры попадут сюда")
+                    .on_hover_text(t.subfolder_tooltip)
                     .clicked()
                 {
                     app.session.set_new_folder(&folder);
@@ -280,43 +292,54 @@ fn section_new_folder(app: &mut App, ui: &mut Ui) {
             }
         });
     }
-    ui.label(
-        RichText::new(format!(
-            "Имя по умолчанию: {} / {}",
-            picture_measure::POINT_PREFIX,
-            picture_measure::RECT_PREFIX
-        ))
-        .small()
-        .weak(),
-    );
+    ui.label(RichText::new(t.default_name_note).small().weak());
+
+    // Переключатель языка: каждая надпись написана по-русски, чтобы её узнали
+    // независимо от текущего языка интерфейса.
+    ui.horizontal(|ui| {
+        ui.label(t.language);
+        for lang in Lang::ALL {
+            if ui
+                .selectable_label(app.lang == lang, lang.native_name())
+                .clicked()
+            {
+                app.set_lang(lang);
+            }
+        }
+    });
 }
 
 fn section_list(app: &mut App, ui: &mut Ui) {
+    let t = app.t();
     let counts = app.session.counts();
-    group(
-        ui,
-        &format!(
-            "Фигуры: {} (точек {}, прямоугольников {})",
-            counts.total, counts.points, counts.rects
-        ),
+    let title = fill(
+        t.figures,
+        &[
+            ("n", &counts.total.to_string()),
+            ("p", &counts.points.to_string()),
+            ("r", &counts.rects.to_string()),
+        ],
     );
+    group(ui, &title);
     ui.horizontal(|ui| {
-        if ui.button("Выбрать все").clicked() {
+        if ui.button(t.select_all).clicked() {
             app.session.select_all();
         }
-        if ui.button("Снять выделение").clicked() {
+        if ui.button(t.clear_selection).clicked() {
             app.session.clear_selection();
         }
     });
     ui.horizontal(|ui| {
         if ui
-            .button("Перенумеровать")
-            .on_hover_text("Сделать имена point_1, rect_2, … подряд")
+            .button(t.renumber)
+            .on_hover_text(t.renumber_hint)
             .clicked()
         {
             app.session.renumber();
+            let template = app.t().renumbered;
+            app.say(template, &[]);
         }
-        if ui.button("Удалить выбранные").clicked() {
+        if ui.button(t.delete_selected).clicked() {
             app.session.delete_selected();
         }
     });
@@ -326,7 +349,7 @@ fn section_list(app: &mut App, ui: &mut Ui) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if app.session.set().is_empty() {
-                ui.label(RichText::new("Пока пусто").italics());
+                ui.label(RichText::new(app.t().list_empty).italics());
             }
             // Snapshot first: the closure needs `&mut app` while painting.
             let rows: Vec<ListRow> = app
@@ -340,7 +363,7 @@ fn section_list(app: &mut App, ui: &mut Ui) {
                     custom: annotation.has_custom_name(),
                     folder: annotation.folder().to_owned(),
                     color: annotation.color,
-                    tip: Session::describe(annotation),
+                    tip: Session::describe(annotation, app.lang),
                 })
                 .collect();
 
@@ -379,12 +402,12 @@ fn section_list(app: &mut App, ui: &mut Ui) {
                             }
                             if name_response
                                 .context_menu(|ui| {
-                                    if ui.button("Удалить").clicked() {
+                                    let t = app.t();
+                                    if ui.button(t.menu_delete).clicked() {
                                         app.session.delete_one(row.id);
                                         ui.close();
                                     }
-                                    if ui.button("Вернуть имя по умолчанию").clicked()
-                                    {
+                                    if ui.button(t.menu_reset_name).clicked() {
                                         app.session.set_name(row.id, "");
                                         ui.close();
                                     }
@@ -393,7 +416,11 @@ fn section_list(app: &mut App, ui: &mut Ui) {
                             {
                                 app.session.select_only(row.id);
                             }
-                            if ui.small_button("✕").on_hover_text("Удалить").clicked() {
+                            if ui
+                                .small_button("✕")
+                                .on_hover_text(app.t().menu_delete)
+                                .clicked()
+                            {
                                 app.session.delete_one(row.id);
                             }
                         });
@@ -416,15 +443,17 @@ struct ListRow {
 }
 
 fn section_selected(app: &mut App, ui: &mut Ui) {
-    group(ui, "Свойства выбранного");
+    let t = app.t();
+    group(ui, t.section_properties);
     if app.session.selection().is_empty() {
-        ui.label(RichText::new("Ничего не выбрано").italics());
+        ui.label(RichText::new(t.nothing_selected).italics());
         return;
     }
     if app.session.selection().len() > 1 {
-        ui.label(format!("Выбрано фигур: {}", app.session.selection().len()));
+        let n = app.session.selection().len().to_string();
+        ui.label(fill(t.selected_count, &[("n", &n)]));
         ui.horizontal_wrapped(|ui| {
-            ui.label("Цвет для всех:");
+            ui.label(t.colour_for_all);
             for color in palette() {
                 if swatch(ui, color, false).clicked() {
                     app.session.set_selection_color(color);
@@ -432,23 +461,19 @@ fn section_selected(app: &mut App, ui: &mut Ui) {
             }
         });
         ui.horizontal(|ui| {
-            ui.label("Папка:");
+            ui.label(t.folder);
             let mut folder = app.session.new_folder().to_owned();
             if ui
                 .add(
                     TextEdit::singleline(&mut folder)
                         .desired_width((ui.available_width() - 104.0).max(50.0))
-                        .hint_text("eyes"),
+                        .hint_text(t.subfolder_hint),
                 )
                 .changed()
             {
                 app.session.set_new_folder(&folder);
             }
-            if ui
-                .button("→")
-                .on_hover_text("Переложить выбранные в эту папку")
-                .clicked()
-            {
+            if ui.button("→").on_hover_text(t.subfolder_tooltip).clicked() {
                 let folder = app.session.new_folder().to_owned();
                 app.session.set_selection_folder(&folder);
             }
@@ -466,7 +491,7 @@ fn section_selected(app: &mut App, ui: &mut Ui) {
 
     let mut name = annotation.display_name();
     ui.horizontal(|ui| {
-        ui.label("Имя:");
+        ui.label(t.name);
         if ui
             .add(
                 TextEdit::singleline(&mut name)
@@ -478,13 +503,10 @@ fn section_selected(app: &mut App, ui: &mut Ui) {
         }
     });
     if annotation.has_custom_name() {
+        let auto = fill(t.auto_name, &[("name", &annotation.default_name())]);
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!("авто-имя: {}", annotation.default_name()))
-                    .small()
-                    .weak(),
-            );
-            if ui.button("Сбросить").clicked() {
+            ui.label(RichText::new(auto).small().weak());
+            if ui.button(t.reset_name).clicked() {
                 app.session.set_name(id, "");
             }
         });
@@ -492,12 +514,12 @@ fn section_selected(app: &mut App, ui: &mut Ui) {
 
     let mut folder = annotation.folder().to_owned();
     ui.horizontal(|ui| {
-        ui.label("Папка:");
+        ui.label(t.folder);
         if ui
             .add(
                 TextEdit::singleline(&mut folder)
                     .desired_width((ui.available_width() - 52.0).max(60.0))
-                    .hint_text("без папки"),
+                    .hint_text(t.folder_hint),
             )
             .changed()
         {
@@ -506,7 +528,7 @@ fn section_selected(app: &mut App, ui: &mut Ui) {
     });
 
     ui.horizontal_wrapped(|ui| {
-        ui.label("Цвет:");
+        ui.label(t.colour);
         for color in palette() {
             if swatch(ui, color, color == annotation.color).clicked() {
                 app.session.set_color(id, color);
@@ -530,73 +552,73 @@ fn section_selected(app: &mut App, ui: &mut Ui) {
     }
 
     ui.horizontal(|ui| {
-        if ui.button("Дублировать").clicked() {
+        if ui.button(t.duplicate).clicked() {
             app.session.duplicate(id);
+            let template = app.t().duplicated;
+            let name = app
+                .session
+                .set()
+                .get(id)
+                .map_or_else(String::new, Annotation::display_name);
+            app.say(template, &[("name", &name)]);
         }
-        if ui.button("Удалить").clicked() {
+        if ui.button(t.delete).clicked() {
             app.session.delete_one(id);
         }
     });
 }
 
 fn section_export(app: &mut App, ui: &mut Ui) {
-    group(ui, "Экспорт");
+    let t = app.t();
+    group(ui, t.section_export);
     ui.horizontal(|ui| {
-        ui.label("Путь JSON:");
+        ui.label(t.json_path);
         ui.add(
             TextEdit::singleline(&mut app.json_path)
                 .desired_width((ui.available_width() - 68.0).max(60.0))
-                .hint_text("annotations.json"),
+                .hint_text(t.json_path_hint),
         );
     });
     ui.horizontal(|ui| {
-        ui.label("Знаков после запятой:");
-        ui.add(
-            egui::Slider::new(&mut app.precision, 0..=4)
-                .suffix(" ")
-                .text("decimal"),
-        );
+        ui.label(t.precision);
+        ui.add(egui::Slider::new(&mut app.precision, 0..=4).suffix(" "));
     });
     ui.horizontal(|ui| {
-        if ui.button("Сохранить").clicked() {
+        if ui.button(t.save_json).clicked() {
             app.save_json();
         }
-        if ui.button("Копировать").clicked() {
+        if ui.button(t.copy_json).clicked() {
             app.copy_json(ui.ctx(), true);
         }
     });
-    ui.label("Папка для раздельного экспорта:");
+    ui.label(t.split_dir);
     let mut dir = app.split_dir.clone();
     ui.horizontal(|ui| {
         ui.add(
             TextEdit::singleline(&mut dir)
                 .desired_width((ui.available_width() - 88.0).max(60.0))
-                .hint_text("out/"),
+                .hint_text(t.split_dir_hint),
         );
-        if ui.button("Записать").clicked() {
+        if ui.button(t.write).clicked() {
             app.split_dir.clone_from(&dir);
             app.save_split(&dir);
         }
     });
-    ui.label(
-        RichText::new("Каждая фигура сохраняется отдельным файлом: <папка>/<имя>.json")
-            .small()
-            .weak(),
-    );
+    ui.label(RichText::new(t.split_hint).small().weak());
     if !app.last_split.is_empty() {
         ui.label(RichText::new(&app.last_split).small().monospace());
     }
 
     ui.horizontal(|ui| {
-        ui.checkbox(&mut app.show_labels, "Подписи");
-        ui.checkbox(&mut app.show_grid, "Сетка");
-        ui.checkbox(&mut app.show_ruler, "Линейки");
+        ui.checkbox(&mut app.show_labels, t.show_labels);
+        ui.checkbox(&mut app.show_grid, t.show_grid);
+        ui.checkbox(&mut app.show_ruler, t.show_rulers);
     });
     ui.horizontal(|ui| {
-        if ui.button("Горячие клавиши").clicked() {
+        if ui.button(t.hotkeys).clicked() {
             app.show_help = true;
         }
-        if ui.button("О проекте").clicked() {
+        if ui.button(t.about).clicked() {
             app.show_about = true;
         }
     });
@@ -607,39 +629,37 @@ fn section_export(app: &mut App, ui: &mut Ui) {
 // ----------------------------------------------------------------------
 
 fn status_bar(app: &mut App, ui: &mut Ui) {
+    let t = app.t();
+    let position = app
+        .session
+        .pointer()
+        .position()
+        .map(|p| app.session.view().to_image(p));
     egui::Panel::bottom("status")
         .exact_size(24.0)
         .show(ui, |ui| {
-            let message = app.session.take_message();
-            ui.horizontal(|ui| {
-                if let Some(message) = message {
-                    let color = if message.is_error {
-                        Color32::from_rgb(255, 120, 120)
-                    } else {
-                        Color32::from_rgb(140, 220, 160)
-                    };
-                    ui.label(RichText::new(message.text).color(color));
-                } else if app.has_image() {
-                    match app
-                        .session
-                        .pointer()
-                        .position()
-                        .map(|p| app.session.view().to_image(p))
-                    {
-                        Some(p) => {
-                            ui.label(
-                                RichText::new(format!("x = {:>9.2}   y = {:>9.2}", p.x, p.y))
-                                    .monospace(),
-                            );
-                        }
-                        None => {
-                            ui.label(RichText::new(status_hint()).weak());
-                        }
-                    }
+            if let Some(message) = app.session.take_message() {
+                let color = if message.is_error {
+                    Color32::from_rgb(255, 120, 120)
                 } else {
-                    ui.label(RichText::new(status_hint()).weak());
-                }
-            });
+                    Color32::from_rgb(140, 220, 160)
+                };
+                ui.label(RichText::new(message.text).color(color));
+            } else if let Some(p) = position {
+                let template = t.cursor_pos;
+                let text = fill(
+                    template,
+                    &[
+                        ("x", &format!("{:>9.2}", p.x)),
+                        ("y", &format!("{:>9.2}", p.y)),
+                    ],
+                );
+                ui.label(RichText::new(text).monospace());
+            } else {
+                // Без сообщения и без картинки показываем, что умеет программа.
+                let _ = app.has_image();
+                ui.label(RichText::new(t.status_hint).weak());
+            }
         });
 }
 
@@ -657,35 +677,21 @@ fn central(app: &mut App, ui: &mut Ui) {
 }
 
 fn help_window(app: &mut App, ctx: &Context) {
+    let t = app.t();
+    let lang = app.lang;
     let mut open = app.show_help;
-    egui::Window::new("Горячие клавиши")
+    egui::Window::new(t.hotkeys_title)
         .open(&mut open)
         .resizable(false)
         .show(ctx, |ui| {
-            let rows: [(&str, &str); 15] = [
-                ("ЛКМ (клик)", "точка"),
-                ("ЛКМ (протяжка)", "прямоугольник"),
-                ("ЛКМ + Shift (протяжка)", "квадрат"),
-                ("СКМ / ПКМ (протяжка)", "панорама"),
-                ("Alt + ЛКМ", "панорама"),
-                ("Колесо мыши", "масштаб"),
-                ("D / V / X / H", "рисование / выбор / удаление / панорама"),
-                ("F", "вписать изображение"),
-                ("Ctrl+S", "сохранить JSON"),
-                ("Ctrl+C", "копировать JSON"),
-                ("Ctrl+Z / Ctrl+Shift+Z", "отменить / повторить"),
-                ("Ctrl+A", "выбрать всё"),
-                ("Esc", "снять выделение"),
-                ("Delete", "удалить выбранные"),
-                ("ПКМ по фигуре", "контекстное меню"),
-            ];
+            let rows = help_rows(lang);
             egui::Grid::new("help-grid")
                 .num_columns(2)
                 .striped(true)
                 .spacing([16.0, 4.0])
                 .show(ui, |ui| {
-                    ui.label(RichText::new("Действие").strong());
-                    ui.label(RichText::new("Смысл").strong());
+                    ui.label(RichText::new(t.hotkeys_action).strong());
+                    ui.label(RichText::new(t.hotkeys_meaning).strong());
                     ui.end_row();
                     for (action, meaning) in rows {
                         ui.label(RichText::new(action).monospace());
@@ -697,33 +703,66 @@ fn help_window(app: &mut App, ctx: &Context) {
     app.show_help = open;
 }
 
+/// One row of the hot-key table: what to press, and what it does.
+type HelpRow = (&'static str, &'static str);
+
+/// The hot-key table in `lang`.
+#[must_use]
+pub(crate) fn help_rows(lang: Lang) -> Vec<HelpRow> {
+    match lang {
+        Lang::Ru => vec![
+            ("ЛКМ (клик)", "точка"),
+            ("ЛКМ (протяжка)", "прямоугольник"),
+            ("ЛКМ + Shift (протяжка)", "квадрат"),
+            ("СКМ / ПКМ (протяжка)", "панорама"),
+            ("Alt + ЛКМ", "панорама"),
+            ("Колесо мыши", "масштаб"),
+            ("D / V / X / H", "рисование / выбор / удаление / панорама"),
+            ("F", "вписать изображение"),
+            ("Ctrl+S", "сохранить JSON"),
+            ("Ctrl+C", "копировать JSON"),
+            ("Ctrl+Z / Ctrl+Shift+Z", "отменить / повторить"),
+            ("Ctrl+A", "выбрать всё"),
+            ("Esc", "снять выделение"),
+            ("Delete", "удалить выбранные"),
+            ("ПКМ по фигуре", "контекстное меню"),
+        ],
+        Lang::En => vec![
+            ("Left click", "point"),
+            ("Left click + drag", "rectangle"),
+            ("Left click + Shift + drag", "square"),
+            ("Middle / right drag", "pan"),
+            ("Alt + left click", "pan"),
+            ("Mouse wheel", "zoom"),
+            ("D / V / X / H", "draw / select / delete / pan"),
+            ("F", "fit the image"),
+            ("Ctrl+S", "save JSON"),
+            ("Ctrl+C", "copy JSON"),
+            ("Ctrl+Z / Ctrl+Shift+Z", "undo / redo"),
+            ("Ctrl+A", "select all"),
+            ("Esc", "clear the selection"),
+            ("Delete", "delete the selected figures"),
+            ("Right click on a figure", "context menu"),
+        ],
+    }
+}
+
 fn about_window(app: &mut App, ctx: &Context) {
+    let t = app.t();
     let mut open = app.show_about;
-    egui::Window::new("О программе")
+    egui::Window::new(t.about_title)
         .open(&mut open)
         .resizable(false)
         .show(ctx, |ui| {
             ui.label(RichText::new("picture-measure").strong().size(18.0));
-            ui.label(format!("версия {}", picture_measure::version()));
+            ui.label(format!("{} {}", t.version, picture_measure::version()));
             ui.separator();
-            ui.label("Измеряйте картинки точками и прямоугольниками,");
-            ui.label("называйте их и выгружайте разметку в JSON.");
+            ui.label(t.about_line1);
+            ui.label(t.about_line2);
             ui.separator();
-            ui.hyperlink_to(
-                "github.com/ReDeced/picture-measure",
-                "https://github.com/ReDeced/picture-measure",
-            );
+            ui.hyperlink_to(t.project_url, "https://github.com/ReDeced/picture-measure");
             ui.separator();
-            ui.label(
-                RichText::new(format!(
-                    "Координаты: пиксели, начало — левый верхний угол.\n\
-                     Имена по умолчанию: {}_N и {}_N, где N — номер фигуры.",
-                    picture_measure::POINT_PREFIX,
-                    picture_measure::RECT_PREFIX
-                ))
-                .small()
-                .weak(),
-            );
+            ui.label(RichText::new(t.about_note).small().weak());
         });
     app.show_about = open;
 }
@@ -788,15 +827,20 @@ mod tests {
     }
 
     #[test]
-    fn every_tool_has_a_hotkey_and_a_label() {
-        // Интерфейс полностью русскоязычный — такие подписи видит пользователь.
-        let labels: std::collections::BTreeSet<&str> =
-            Tool::ALL.iter().map(|t| t.label()).collect();
-        assert_eq!(
-            labels,
-            ["Выбор", "Панорама", "Рисование", "Удаление"].into(),
-            "набор подписей инструментов изменился"
-        );
+    fn every_tool_has_a_hotkey_and_a_label_in_both_languages() {
+        let expected = [
+            (Lang::Ru, ["Выбор", "Панорама", "Рисование", "Удаление"]),
+            (Lang::En, ["Draw", "Pan", "Select", "Delete"]),
+        ];
+        for (lang, want) in expected {
+            let labels: std::collections::BTreeSet<&str> =
+                Tool::ALL.iter().map(|t| t.label(lang)).collect();
+            assert_eq!(
+                labels,
+                want.into_iter().collect::<std::collections::BTreeSet<_>>(),
+                "{lang}: набор подписей инструментов изменился"
+            );
+        }
 
         let mut hotkeys = std::collections::HashSet::new();
         for tool in Tool::ALL {
@@ -806,12 +850,297 @@ mod tests {
                 hotkeys.insert(key),
                 "горячая клавиша {key:?} продублирована"
             );
+            for lang in Lang::ALL {
+                assert!(
+                    tool.description(lang).trim().chars().count() > 10,
+                    "{lang}: у инструмента {:?} слишком короткое описание",
+                    tool.label(lang)
+                );
+                assert_ne!(
+                    tool.description(Lang::Ru),
+                    tool.description(Lang::En),
+                    "описание инструмента {:?} не переведено",
+                    tool.label(Lang::Ru)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_hotkey_table_is_translated() {
+        for lang in Lang::ALL {
+            let rows = help_rows(lang);
+            assert_eq!(rows.len(), 15, "{lang}: изменилось число строк");
+            for (action, meaning) in rows {
+                assert!(
+                    !action.trim().is_empty(),
+                    "{lang}: пустая клавиша в строке «{meaning}»"
+                );
+                assert!(
+                    meaning.trim().chars().count() >= 3,
+                    "{lang}: слишком короткое пояснение для «{action}»"
+                );
+            }
+        }
+        assert_ne!(help_rows(Lang::Ru), help_rows(Lang::En));
+    }
+
+    /// Прогоняет весь интерфейс через egui без окна и возвращает весь текст,
+    /// который egui реально разместил на экране.
+    ///
+    /// egui собирает настоящее дерево виджетов, поэтому тест видит ровно те
+    /// надписи, которые окажутся на экране.
+    fn render_everything(app: &mut App) -> Vec<String> {
+        app.render_headless()
+    }
+
+    /// Склеивает размещённый текст в одну строку для удобного поиска.
+    #[must_use]
+    fn rendered_text(app: &mut App) -> String {
+        render_everything(app).join("\u{1}")
+    }
+
+    #[test]
+    fn the_english_interface_really_renders() {
+        let mut app = test_app();
+        app.lang = Lang::En;
+        app.image_name = "photo.png".to_owned();
+        app.image_size = vec2(1920.0, 1080.0);
+        app.canvas_rect = Some(egui::Rect::from_min_max(
+            egui::pos2(0.0, 0.0),
+            egui::pos2(1200.0, 800.0),
+        ));
+        app.session.add_point(egui::pos2(10.0, 20.0));
+        app.session
+            .add_rect(picture_measure::geometry::Rect::from_xywh(
+                0.0, 0.0, 40.0, 30.0,
+            ));
+        app.session.set_new_folder("eyes");
+
+        let text = rendered_text(&mut app);
+
+        // Надписи панелей.
+        for expected in [
+            "Open",
+            "Clear",
+            "Save JSON",
+            "Copy JSON",
+            "Undo",
+            "Redo",
+            "Tool:",
+            "Fit",
+            "Image",
+            "New figures",
+            "Sub-folder:",
+            "Figures:",
+            "Selected figure",
+            "Export",
+            "JSON path:",
+            "Decimal places:",
+            "Labels",
+            "Grid",
+            "Rulers",
+            "Hotkeys",
+            "About",
+        ] {
             assert!(
-                tool.description().trim().chars().count() > 10,
-                "у инструмента {:?} слишком короткое описание",
-                tool.label()
+                text.contains(expected),
+                "на экране нет строки «{expected}»:\n{text}"
             );
         }
+        // Подписи инструментов — на своём, английском языке.
+        for tool in Tool::ALL {
+            let label = tool.label(Lang::En);
+            assert!(text.contains(label), "нет кнопки «{label}»:\n{text}");
+        }
+        // Счётчик фигур собран с подстановками.
+        assert!(
+            text.contains("Figures: 2"),
+            "счётчик не подставился:\n{text}"
+        );
+        // И русских надписей быть не должно.
+        for forbidden in ["Открыть", "Сохранить", "Инструмент", "Экспорт", "Фигуры"]
+        {
+            assert!(
+                !text.contains(forbidden),
+                "русская строка «{forbidden}» попала в английский интерфейс:\n{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_russian_interface_really_renders() {
+        let mut app = test_app();
+        app.lang = Lang::Ru;
+        app.canvas_rect = Some(egui::Rect::from_min_max(
+            egui::pos2(0.0, 0.0),
+            egui::pos2(1200.0, 800.0),
+        ));
+        app.session.add_point(egui::pos2(10.0, 20.0));
+        let text = rendered_text(&mut app);
+
+        for expected in [
+            "Открыть",
+            "Инструмент:",
+            "Изображение",
+            "Экспорт",
+            "Рисование",
+        ] {
+            assert!(
+                text.contains(expected),
+                "на экране нет строки «{expected}»:\n{text}"
+            );
+        }
+        assert!(
+            text.contains("Фигуры: 1"),
+            "счётчик не подставился:\n{text}"
+        );
+        for forbidden in ["Open", "Save JSON", "Tool:", "Export"] {
+            assert!(
+                !text.contains(forbidden),
+                "английская строка «{forbidden}» попала в русский интерфейс:\n{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn switching_language_changes_what_is_drawn() {
+        let mut app = test_app();
+        app.canvas_rect = Some(egui::Rect::from_min_max(
+            egui::pos2(0.0, 0.0),
+            egui::pos2(1200.0, 800.0),
+        ));
+
+        let ru = rendered_text(&mut app);
+        assert!(ru.contains("Инструмент:"));
+
+        app.set_lang(Lang::En);
+        let en = rendered_text(&mut app);
+        assert!(en.contains("Tool:"));
+        assert!(!en.contains("Инструмент:"));
+
+        app.set_lang(Lang::Ru);
+        assert!(rendered_text(&mut app).contains("Инструмент:"));
+    }
+
+    #[test]
+    fn no_message_leaves_its_placeholders_unfilled() {
+        // Ошибки и статусы показываются через `fill`; незаполненное `{ключ}`
+        // означало бы, что шаблон перепутали с текстом.
+        let mut app = test_app();
+        app.lang = Lang::Ru;
+        app.canvas_rect = Some(egui::Rect::from_min_max(
+            egui::pos2(0.0, 0.0),
+            egui::pos2(1200.0, 800.0),
+        ));
+
+        // Пустой путь — намеренная ошибка: сообщение должно быть
+        // заполненным, а не содержать сырой `{placeholder}`.
+        app.json_path = String::new();
+        app.save_json();
+
+        let message = app.session.message().expect("сообщение об ошибке").clone();
+        assert!(
+            !message.text.contains('{'),
+            "незаполненный ключ: {message:?}"
+        );
+        assert!(message.is_error, "это должно быть ошибкой");
+
+        app.load_annotations(std::path::Path::new("/no/such/file.json"));
+        let message = app.session.message().expect("сообщение об ошибке").clone();
+        assert!(
+            !message.text.contains('{'),
+            "незаполненный ключ: {message:?}"
+        );
+    }
+
+    #[test]
+    fn broken_json_reports_the_problem_in_the_chosen_language() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, r#"[{"type":"rect","x":0,"y":0}]"#).unwrap();
+
+        let mut app = test_app();
+        app.lang = Lang::En;
+        app.load_annotations(&path);
+        let en = app.session.message().expect("сообщение").clone();
+        assert!(en.is_error);
+        assert!(en.text.contains("width"), "{en:?}");
+
+        app.lang = Lang::Ru;
+        app.load_annotations(&path);
+        let ru = app.session.message().expect("сообщение").clone();
+        assert!(ru.text.contains("width"), "{ru:?}");
+        assert_ne!(en.text, ru.text, "перевод не применился");
+    }
+
+    #[test]
+    fn the_whole_interface_builds_in_both_languages() {
+        for lang in Lang::ALL {
+            let mut app = test_app();
+            app.lang = lang;
+            // Немного фигур, чтобы наполнить список и блок свойств.
+            let a = app.session.add_point(egui::pos2(10.0, 20.0));
+            app.session
+                .add_rect(picture_measure::geometry::Rect::from_xywh(
+                    0.0, 0.0, 40.0, 30.0,
+                ));
+            app.session.select_only(a);
+            app.session.set_new_folder("eyes");
+
+            // Три кадра: первый строит дерево, остальные проверяют, что
+            // состояние (выделение, прокрутка, попапы) устойчиво.
+            for _ in 0..3 {
+                render_everything(&mut app);
+            }
+            assert!(
+                !app.ctx.memory(|_| false) && app.session.set().len() == 2,
+                "{lang}: интерфейс потерял фигуры"
+            );
+        }
+    }
+
+    #[test]
+    fn the_about_and_help_windows_open_in_both_languages() {
+        for lang in Lang::ALL {
+            for window in [true, false] {
+                let mut app = test_app();
+                app.lang = lang;
+                app.show_help = window;
+                app.show_about = window;
+                app.canvas_rect = Some(egui::Rect::from_min_max(
+                    egui::pos2(0.0, 0.0),
+                    egui::pos2(800.0, 600.0),
+                ));
+                for _ in 0..2 {
+                    render_everything(&mut app);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_full_workspace_renders_with_an_image_and_a_selection() {
+        let mut app = test_app();
+        app.lang = Lang::En;
+        app.image_name = "photo.png".to_owned();
+        app.image_size = vec2(1920.0, 1080.0);
+        app.canvas_rect = Some(egui::Rect::from_min_max(
+            egui::pos2(0.0, 0.0),
+            egui::pos2(1200.0, 800.0),
+        ));
+        let a = app.session.add_point(egui::pos2(5.0, 5.0));
+        app.session
+            .add_rect(picture_measure::geometry::Rect::from_xywh(
+                1.0, 2.0, 30.0, 40.0,
+            ));
+        app.session.select_only(a);
+        app.session.set_folder(a, "eyes");
+        app.session.renumber();
+        for _ in 0..3 {
+            render_everything(&mut app);
+        }
+        assert_eq!(app.session.set().len(), 2);
     }
 
     #[test]

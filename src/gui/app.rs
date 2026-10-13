@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use egui::{
     Color32, Context, FontId, Key, Rect as EguiRect, TextureHandle, TextureOptions, Ui, Vec2, vec2,
 };
+use picture_measure::i18n::{self, Lang, Text, fill};
 use picture_measure::json_io::{self, ImageInfo};
 use picture_measure::model::ShapeId;
 use picture_measure::session::Session;
@@ -20,10 +21,15 @@ pub struct CliArgs {
     pub image: Option<PathBuf>,
     /// JSON file with annotations to load on start-up.
     pub annotations: Option<PathBuf>,
+    /// Interface language; detected from the environment when absent.
+    pub lang: Option<Lang>,
 }
 
 /// The whole application.
 pub struct App {
+    /// The egui context, kept so the title can be updated when the language
+    /// changes.
+    pub(crate) ctx: Context,
     /// Everything the measurement session needs.
     pub(crate) session: Session,
     /// Decoded image, uploaded to the GPU.
@@ -55,6 +61,8 @@ pub struct App {
     pub(crate) show_help: bool,
     /// Whether the about window is open.
     pub(crate) show_about: bool,
+    /// Interface language.
+    pub(crate) lang: Lang,
 
     /// Rectangle of the canvas of the previous frame.
     pub(crate) canvas_rect: Option<EguiRect>,
@@ -84,6 +92,7 @@ impl App {
         });
 
         Self {
+            ctx: ctx.clone(),
             session: Session::new(),
             texture: None,
             image_path: None,
@@ -99,6 +108,7 @@ impl App {
             last_split: String::new(),
             show_help: false,
             show_about: false,
+            lang: cli.lang.unwrap_or_else(i18n::from_environment),
             canvas_rect: None,
             fit_pending: true,
             pending_image: cli.image,
@@ -115,6 +125,70 @@ impl App {
     /// Shows a transient error message in the status bar.
     pub(crate) fn notify_error(&mut self, text: impl Into<String>) {
         self.session.notify_error(text);
+    }
+
+    /// Every string of the current language.
+    pub(crate) fn t(&self) -> &'static Text {
+        Text::get(self.lang)
+    }
+
+    /// Switches the interface language and refreshes the window title.
+    pub(crate) fn set_lang(&mut self, lang: Lang) {
+        if self.lang != lang {
+            self.lang = lang;
+            let title = self.t().window_title.to_owned();
+            self.ctx
+                .send_viewport_cmd(egui::ViewportCommand::Title(title));
+        }
+    }
+
+    /// Shows a localised informational message.
+    ///
+    /// `args` fills the `{placeholders}` of the template.
+    pub(crate) fn say(&mut self, template: &str, args: &[(&str, &str)]) {
+        self.session.notify(fill(template, args));
+    }
+
+    /// Shows a localised error message.
+    pub(crate) fn complain(&mut self, template: &str, args: &[(&str, &str)]) {
+        self.session.notify_error(fill(template, args));
+    }
+
+    /// Runs one frame of the whole interface without a window.
+    ///
+    /// Used by the tests: egui builds the real widget tree and produces real
+    /// text shapes, so a test can assert not only "no panic" but also "the
+    /// English labels are really on screen".
+    #[cfg(test)]
+    pub(crate) fn render_headless(&mut self) -> Vec<String> {
+        // `ctx` клонируем заранее: замыкание уже занимает `&mut self`.
+        let ctx = self.ctx.clone();
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::gui::panels::frame(self, ui);
+        });
+
+        // Настоящий бэкенд загружает текстуры шрифтов; в тесте «бэкенда» нет,
+        // поэтому сливаем дельты в менеджер текстур вручную, иначе egui
+        // упадёт на Drop с «unapplied deltas».
+        let mut delta = output.textures_delta;
+        delta.clear();
+        let manager = ctx.tex_manager();
+        let mut textures = manager.write();
+        let set = std::mem::take(&mut delta.set);
+        for (id, images) in set {
+            for image in images {
+                textures.set(id, image);
+            }
+        }
+
+        output
+            .shapes
+            .into_iter()
+            .filter_map(|clipped| match clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
     }
 
     // ------------------------------------------------------------------
@@ -136,10 +210,14 @@ impl App {
                 self.fit_pending = true;
                 self.session
                     .load(picture_measure::model::AnnotationSet::new());
-                self.notify(format!("Загружено: {}", self.image_name));
+                let template = self.t().loaded_image;
+                let name = self.image_name.clone();
+                self.say(template, &[("name", &name)]);
             }
             Err(error) => {
-                self.notify_error(format!("Не удалось открыть {}: {error}", path.display()));
+                let template = self.t().image_failed;
+                let path = path.display().to_string();
+                self.complain(template, &[("path", &path), ("error", &error)]);
             }
         }
     }
@@ -158,15 +236,24 @@ impl App {
                     {
                         self.pending_image = Some(PathBuf::from(&info.path));
                     }
-                    self.notify(format!(
-                        "Загружено {} фигур (точек: {}, прямоугольников: {})",
-                        counts.total, counts.points, counts.rects
-                    ));
+                    let template = self.t().loaded_figures;
+                    let (n, p, r) = (
+                        counts.total.to_string(),
+                        counts.points.to_string(),
+                        counts.rects.to_string(),
+                    );
+                    self.say(template, &[("n", &n), ("p", &p), ("r", &r)]);
                 }
-                Err(error) => self.notify_error(format!("Ошибка чтения JSON: {error}")),
+                Err(error) => {
+                    let template = self.t().json_failed;
+                    let message = error.message(self.lang);
+                    self.complain(template, &[("error", &message)]);
+                }
             },
             Err(error) => {
-                self.notify_error(format!("Не удалось прочитать {}: {error}", path.display()));
+                let template = self.t().read_failed;
+                let path = path.display().to_string();
+                self.complain(template, &[("path", &path), ("error", &error.to_string())]);
             }
         }
     }
@@ -198,20 +285,28 @@ impl App {
     pub(crate) fn save_json(&mut self) {
         let path = self.json_path.trim().to_owned();
         if path.is_empty() {
-            self.notify_error("Укажите путь для сохранения JSON");
+            let message = self.t().need_json_path.to_owned();
+            self.notify_error(message);
             return;
         }
         match self.to_json(true) {
             Ok(text) => match std::fs::write(&path, text) {
                 Ok(()) => {
                     self.session.mark_saved();
-                    self.notify(format!("Сохранено: {path}"));
+                    let template = self.t().saved;
+                    self.say(template, &[("path", &path)]);
                 }
                 Err(error) => {
-                    self.notify_error(format!("Не удалось сохранить {path}: {error}"));
+                    let template = self.t().save_failed;
+                    let message = error.to_string();
+                    self.complain(template, &[("path", &path), ("error", &message)]);
                 }
             },
-            Err(error) => self.notify_error(format!("Не удалось сериализовать: {error}")),
+            Err(error) => {
+                let template = self.t().serialise_failed;
+                let message = error.message(self.lang);
+                self.complain(template, &[("error", &message)]);
+            }
         }
     }
 
@@ -219,10 +314,16 @@ impl App {
     pub(crate) fn copy_json(&mut self, ctx: &Context, pretty: bool) {
         match self.to_json(pretty) {
             Ok(text) => {
-                ctx.copy_text(text.clone());
-                self.notify(format!("JSON скопирован в буфер ({} символов)", text.len()));
+                let length = text.len().to_string();
+                ctx.copy_text(text);
+                let template = self.t().copied;
+                self.say(template, &[("n", &length)]);
             }
-            Err(error) => self.notify_error(format!("Не удалось сериализовать: {error}")),
+            Err(error) => {
+                let template = self.t().serialise_failed;
+                let message = error.message(self.lang);
+                self.complain(template, &[("error", &message)]);
+            }
         }
     }
 
@@ -230,21 +331,29 @@ impl App {
     pub(crate) fn save_split(&mut self, dir: &str) {
         let base = dir.trim();
         if base.is_empty() {
-            self.notify_error("Укажите папку для раздельного экспорта");
+            let message = self.t().need_split_dir.to_owned();
+            self.notify_error(message);
             return;
         }
         let root = PathBuf::from(base);
         if let Err(error) = std::fs::create_dir_all(&root) {
-            self.notify_error(format!("Не удалось создать {base}: {error}"));
+            let template = self.t().split_create_failed;
+            let message = error.to_string();
+            self.complain(template, &[("dir", base), ("error", &message)]);
             return;
         }
         match picture_measure::split::write_split_json(&root, self.session.set(), self.precision) {
             Ok(count) => {
-                let text = format!("{count} файлов в подпапках внутри {base}");
+                let template = self.t().split_result_done;
+                let text = fill(template, &[("n", &count.to_string()), ("dir", base)]);
                 self.last_split.clone_from(&text);
                 self.notify(text);
             }
-            Err(error) => self.notify_error(format!("Ошибка экспорта: {error}")),
+            Err(error) => {
+                let template = self.t().split_failed;
+                let message = error.message(self.lang);
+                self.complain(template, &[("error", &message)]);
+            }
         }
     }
 
@@ -296,7 +405,11 @@ fn load_texture(ctx: &Context, path: &Path) -> Result<(TextureHandle, Vec2), Str
         .decode()
         .map_err(|e| e.to_string())?;
     if image.width() < 1 || image.height() < 1 {
-        return Err("изображение имеет нулевой размер".to_owned());
+        return Err(format!(
+            "изображение имеет нулевой размер ({}×{})",
+            image.width(),
+            image.height()
+        ));
     }
     let size = vec2(image.width() as f32, image.height() as f32);
     let rgba = image.to_rgba8();
@@ -338,11 +451,6 @@ pub(crate) fn mono(size: f32) -> FontId {
     FontId::monospace(size)
 }
 
-/// Bottom status bar hint.
-pub(crate) fn status_hint() -> &'static str {
-    "ЛКМ — точка/прямоугольник · Shift — квадрат · СКМ/ПКМ — панорама · колесо — зум"
-}
-
 /// Stroke width used for figure outlines.
 pub(crate) fn outline_width(scale: f32) -> f32 {
     (2.0 * scale).clamp(1.0, 2.5)
@@ -375,10 +483,41 @@ pub(crate) fn pasted_text(ctx: &Context) -> Option<String> {
     })
 }
 
+/// An [`App`] with no window attached, for tests.
+#[cfg(test)]
+pub(crate) fn test_app() -> App {
+    App {
+        ctx: Context::default(),
+        session: Session::new(),
+        texture: None,
+        image_path: None,
+        image_name: String::new(),
+        image_size: Vec2::ZERO,
+        open_path: String::new(),
+        json_path: String::new(),
+        precision: 2,
+        show_labels: true,
+        show_grid: true,
+        show_ruler: true,
+        split_dir: String::new(),
+        last_split: String::new(),
+        show_help: false,
+        show_about: false,
+        lang: Lang::Ru,
+        canvas_rect: None,
+        fit_pending: false,
+        pending_image: None,
+        pending_json: None,
+        context_target: None,
+    }
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         crate::gui::panels::frame(self, ui);
     }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {}
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         Color32::from_rgb(24, 25, 28).to_normalized_gamma_f32()
@@ -388,32 +527,6 @@ impl eframe::App for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// An app with no window attached, for unit tests.
-    fn bare_app() -> App {
-        App {
-            session: Session::new(),
-            texture: None,
-            image_path: None,
-            image_name: String::new(),
-            image_size: Vec2::ZERO,
-            open_path: String::new(),
-            json_path: String::new(),
-            precision: 2,
-            show_labels: true,
-            show_grid: true,
-            show_ruler: true,
-            split_dir: String::new(),
-            last_split: String::new(),
-            show_help: false,
-            show_about: false,
-            canvas_rect: None,
-            fit_pending: false,
-            pending_image: None,
-            pending_json: None,
-            context_target: None,
-        }
-    }
 
     #[test]
     fn outlines_stay_visible_at_every_zoom() {
@@ -430,9 +543,28 @@ mod tests {
     }
 
     #[test]
-    fn status_hint_is_useful() {
-        assert!(status_hint().contains("точка"));
-        assert!(status_hint().contains("Shift"));
+    fn both_locales_have_a_useful_status_hint() {
+        for lang in [Lang::Ru, Lang::En] {
+            let hint = Text::get(lang).status_hint;
+            assert!(hint.contains("Shift"), "{lang}: в подсказке нет Shift");
+            assert!(hint.len() > 20, "{lang}: подсказка слишком короткая");
+        }
+        assert_ne!(
+            Text::get(Lang::Ru).status_hint,
+            Text::get(Lang::En).status_hint
+        );
+    }
+
+    #[test]
+    fn switching_language_changes_the_wording() {
+        let mut app = test_app();
+        assert_eq!(app.lang, Lang::Ru);
+        assert_ne!(app.t().save_json, Text::get(Lang::En).save_json);
+        app.set_lang(Lang::En);
+        assert_eq!(app.lang, Lang::En);
+        assert_eq!(app.t().save_json, Text::get(Lang::En).save_json);
+        app.set_lang(Lang::En); // повторное переключение ничего не ломает
+        assert_eq!(app.lang, Lang::En);
     }
 
     #[test]
@@ -465,7 +597,7 @@ mod tests {
 
     #[test]
     fn json_export_mentions_the_image() {
-        let app = bare_app();
+        let app = test_app();
         assert!(!app.has_image());
         assert_eq!(app.session.view().scale, 1.0);
 
@@ -476,7 +608,7 @@ mod tests {
 
     #[test]
     fn json_export_with_figures() {
-        let mut app = bare_app();
+        let mut app = test_app();
         app.session.add_point(egui::pos2(12.0, 34.0));
         let json = app.to_json(true).unwrap();
         assert!(json.contains("\"name\": \"point_1\""), "{json}");
@@ -487,24 +619,24 @@ mod tests {
 
     #[test]
     fn describe_covers_both_kinds() {
-        let mut app = bare_app();
+        let mut app = test_app();
         let point = app.session.add_point(egui::pos2(1.5, 2.5));
         let rect = app
             .session
             .add_rect(picture_measure::geometry::Rect::from_xywh(
                 0.0, 0.0, 10.0, 20.0,
             ));
-        let p = Session::describe(app.session.set().get(point).unwrap());
+        let p = Session::describe(app.session.set().get(point).unwrap(), Lang::Ru);
         assert!(p.contains("точка"), "{p}");
         assert!(p.contains("1.5"), "{p}");
-        let r = Session::describe(app.session.set().get(rect).unwrap());
-        assert!(r.contains("прямоугольник"), "{r}");
+        let r = Session::describe(app.session.set().get(rect).unwrap(), Lang::En);
+        assert!(r.contains("rectangle"), "{r}");
         assert!(r.contains("10.0×20.0"), "{r}");
     }
 
     #[test]
     fn saving_without_a_path_is_an_error_not_a_panic() {
-        let mut app = bare_app();
+        let mut app = test_app();
         app.save_json();
         assert!(app.session.message().unwrap().is_error);
     }
@@ -513,7 +645,7 @@ mod tests {
     fn saving_writes_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("out.json");
-        let mut app = bare_app();
+        let mut app = test_app();
         app.json_path = path.to_string_lossy().into_owned();
         app.session.add_point(egui::pos2(1.0, 2.0));
         app.save_json();
@@ -532,7 +664,7 @@ mod tests {
     fn split_export_creates_the_tree() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("split");
-        let mut app = bare_app();
+        let mut app = test_app();
         let id = app.session.add_point(egui::pos2(1.0, 2.0));
         app.session.set_folder(id, "eyes");
         app.split_dir = out.to_string_lossy().into_owned();
@@ -546,7 +678,7 @@ mod tests {
 
     #[test]
     fn split_export_without_a_directory_is_an_error() {
-        let mut app = bare_app();
+        let mut app = test_app();
         app.save_split("   ");
         assert!(app.session.message().unwrap().is_error);
     }
@@ -560,7 +692,7 @@ mod tests {
             r#"{"annotations":[{"type":"rect","name":"r","x":1,"y":2,"width":3,"height":4}]}"#,
         )
         .unwrap();
-        let mut app = bare_app();
+        let mut app = test_app();
         app.session.add_point(egui::pos2(9.0, 9.0));
         app.load_annotations(&path);
 
@@ -575,14 +707,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad.json");
         std::fs::write(&path, "{ not json").unwrap();
-        let mut app = bare_app();
+        let mut app = test_app();
         app.load_annotations(&path);
         assert!(app.session.message().unwrap().is_error);
     }
 
     #[test]
     fn loading_a_missing_json_reports_the_problem() {
-        let mut app = bare_app();
+        let mut app = test_app();
         app.load_annotations(Path::new("/no/such/file.json"));
         assert!(app.session.message().unwrap().is_error);
     }
@@ -590,7 +722,7 @@ mod tests {
     #[test]
     fn clipboard_copy_reports_the_size() {
         let ctx = Context::default();
-        let mut app = bare_app();
+        let mut app = test_app();
         app.session.add_point(egui::pos2(1.0, 2.0));
         app.copy_json(&ctx, true);
         let message = app.session.message().unwrap();
@@ -600,7 +732,7 @@ mod tests {
 
     #[test]
     fn messages_can_be_set() {
-        let mut app = bare_app();
+        let mut app = test_app();
         app.notify("ок");
         assert!(!app.session.message().unwrap().is_error);
         app.notify_error("плохо");
@@ -609,7 +741,7 @@ mod tests {
 
     #[test]
     fn view_helpers_are_safe_without_a_canvas() {
-        let mut app = bare_app();
+        let mut app = test_app();
         app.fit_view();
         app.reset_zoom();
         assert_eq!(app.session.view().scale, 1.0);

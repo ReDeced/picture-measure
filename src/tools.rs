@@ -48,14 +48,15 @@ impl Tool {
     /// All tools, in toolbar order.
     pub const ALL: [Self; 4] = [Self::Draw, Self::Select, Self::Delete, Self::Pan];
 
-    /// Short label shown in the toolbar.
+    /// Short label shown in the toolbar, in `lang`.
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub const fn label(self, lang: crate::i18n::Lang) -> &'static str {
+        let t = crate::i18n::Text::get(lang);
         match self {
-            Self::Draw => "Рисование",
-            Self::Select => "Выбор",
-            Self::Delete => "Удаление",
-            Self::Pan => "Панорама",
+            Self::Draw => t.tool_draw,
+            Self::Select => t.tool_select,
+            Self::Delete => t.tool_delete,
+            Self::Pan => t.tool_pan,
         }
     }
 
@@ -70,14 +71,15 @@ impl Tool {
         }
     }
 
-    /// One-line description used for tooltips.
+    /// One-line description used for tooltips, in `lang`.
     #[must_use]
-    pub const fn description(self) -> &'static str {
+    pub const fn description(self, lang: crate::i18n::Lang) -> &'static str {
+        let t = crate::i18n::Text::get(lang);
         match self {
-            Self::Draw => "Клик — точка, протяжка — прямоугольник, Shift — квадрат",
-            Self::Select => "Клик — выбрать, протяжка — переместить выбранное",
-            Self::Delete => "Клик по фигуре — удалить её",
-            Self::Pan => "Протяжка — сдвинуть изображение",
+            Self::Draw => t.tool_draw_hint,
+            Self::Select => t.tool_select_hint,
+            Self::Delete => t.tool_delete_hint,
+            Self::Pan => t.tool_pan_hint,
         }
     }
 }
@@ -630,11 +632,17 @@ mod tests {
         assert_eq!(Tool::Delete.hotkey(), Key::X);
         assert_eq!(Tool::Pan.hotkey(), Key::H);
         for tool in Tool::ALL {
-            assert!(!tool.label().trim().is_empty(), "{tool:?}: пустая подпись");
-            assert!(
-                tool.description().contains('—'),
-                "{tool:?}: описание должно объяснять жест"
-            );
+            for lang in crate::i18n::Lang::ALL {
+                let label = tool.label(lang);
+                assert!(
+                    !label.trim().is_empty(),
+                    "{tool:?} / {lang}: пустая подпись"
+                );
+                assert!(
+                    !label.chars().any(char::is_control),
+                    "{tool:?} / {lang}: в подписи есть управляющие символы"
+                );
+            }
         }
     }
 

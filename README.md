@@ -11,9 +11,11 @@
 | | |
 |---|---|
 | **Запуск** | `cargo run --release` |
+| **Автор** | ReDeced |
 | **Форматы картинок** | PNG, JPEG, WebP, BMP |
 | **Формат разметки** | JSON (см. [docs/JSON_FORMAT.md](docs/JSON_FORMAT.md)) |
-| **Лицензия** | MIT |
+| **Языки интерфейса** | русский, английский |
+| **Лицензия** | GPL-3.0-or-later |
 
 ---
 
@@ -120,6 +122,20 @@ cargo install --path .          # тоже ставит в ~/.cargo/bin
 Полный список — в меню «Горячие клавиши» внутри программы и в
 [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
+## Язык интерфейса
+
+Русский и английский. По умолчанию язык берётся из переменных окружения
+`LC_ALL`, `LC_MESSAGES`, `LANG` (например, `LANG=en_US.UTF-8` даст английский),
+иначе используется русский.
+
+Переключить язык можно в любой момент: **Новые фигуры → Язык интерфейса**.
+Либо при запуске:
+
+```bash
+picture-measure --lang en
+picture-measure --lang en photo.png
+```
+
 ## Имена и подпапки
 
 По умолчанию каждая фигура получает имя вида `point_1`, `rect_2` — префикс плюс
@@ -170,10 +186,12 @@ out/
 ## Разработка
 
 ```bash
-cargo test              # 190+ тестов, окно не нужно
-cargo clippy --all-targets
-cargo fmt --check
+make check              # fmt + clippy + 239 тестов
+cargo test              # только тесты, окно не нужно
 ```
+
+Тесты интерфейса гоняют весь UI через egui без окна и проверяют размещённый
+текст, поэтому непереведённая строка валит сборку.
 
 Всё, что можно проверить без окна, вынесено в библиотеку `picture_measure`, а
 `src/gui/` — только отрисовка. Подробности в
@@ -204,4 +222,16 @@ of the source image with the origin in the top-left corner. See
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Copyright © 2026 ReDeced. GPL-3.0-or-later — the full text is in
+[LICENSE](LICENSE).
+
+This is free software: you can redistribute it and/or modify it under the terms
+of the GNU General Public License as published by the Free Software Foundation,
+either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.

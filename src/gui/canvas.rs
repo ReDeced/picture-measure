@@ -11,6 +11,7 @@ use egui::{
 use picture_measure::geometry::Rect as ImageRect;
 use picture_measure::model::{Annotation, FILL_ALPHA, Geometry, label_anchor};
 use picture_measure::session::BUTTONS;
+use picture_measure::session::Session;
 use picture_measure::view::ViewTransform;
 
 /// Radius of a point marker, in screen pixels.
@@ -69,7 +70,7 @@ fn paint(app: &App, ui: &Ui, rect: EguiRect) {
     painter.rect_filled(rect, 0.0, Color32::from_rgb(28, 29, 33));
 
     let Some(texture) = app.texture.as_ref() else {
-        draw_placeholder(&painter, rect);
+        draw_placeholder(&painter, rect, app.t().drop_image);
         return;
     };
 
@@ -123,12 +124,12 @@ fn paint(app: &App, ui: &Ui, rect: EguiRect) {
 }
 
 /// The "drop an image here" placeholder.
-fn draw_placeholder(painter: &Painter, rect: EguiRect) {
+fn draw_placeholder(painter: &Painter, rect: EguiRect, message: &str) {
     let center = rect.center();
     painter.text(
         center,
         Align2::CENTER_CENTER,
-        "Перетащите изображение сюда\nили укажите путь на панели слева",
+        message,
         FontId::proportional(16.0),
         Color32::from_gray(140),
     );
@@ -297,8 +298,9 @@ fn context_menu(app: &mut App, response: &egui::Response, canvas: EguiRect) {
 
     response.context_menu(|ui| {
         ui.set_min_width(210.0);
+        let t = app.t();
         let Some(id) = app.context_target else {
-            ui.label("Под курсором нет фигур");
+            ui.label(t.no_figure_here);
             return;
         };
         let annotation = app.session.set().get(id);
@@ -306,25 +308,30 @@ fn context_menu(app: &mut App, response: &egui::Response, canvas: EguiRect) {
             RichText::new(annotation.map_or_else(String::new, Annotation::display_name)).strong(),
         );
         if let Some(annotation) = annotation {
-            ui.label(
-                RichText::new(picture_measure::session::Session::describe(annotation)).small(),
-            );
+            ui.label(RichText::new(Session::describe(annotation, app.lang)).small());
         }
         ui.separator();
-        if ui.button("Выбрать").clicked() {
+        if ui.button(t.menu_select).clicked() {
             app.session.select_only(id);
             ui.close();
         }
-        if ui.button("Дублировать").clicked() {
+        if ui.button(t.menu_duplicate).clicked() {
             app.session.duplicate(id);
+            let template = app.t().duplicated;
+            let name = app
+                .session
+                .set()
+                .get(id)
+                .map_or_else(String::new, Annotation::display_name);
+            app.say(template, &[("name", &name)]);
             ui.close();
         }
-        if ui.button("Вернуть имя по умолчанию").clicked() {
+        if ui.button(t.menu_reset_name).clicked() {
             app.session.set_name(id, "");
             ui.close();
         }
         ui.separator();
-        if ui.button("Удалить").clicked() {
+        if ui.button(t.menu_delete).clicked() {
             app.session.delete_one(id);
             ui.close();
         }

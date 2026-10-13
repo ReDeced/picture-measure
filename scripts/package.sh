@@ -90,7 +90,7 @@ Name:           picture-measure
 Version:        $VERSION
 Release:        1%{?dist}
 Summary:        Измерение изображений точками и прямоугольниками
-License:        MIT
+License:        GPL-3.0-or-later
 URL:            https://github.com/ReDeced/picture-measure
 Source0:        %{name}-%{version}.tar.gz
 Requires:       libgl

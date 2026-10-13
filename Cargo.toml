@@ -4,14 +4,14 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 description = "Desktop GUI tool to measure images: place points and rectangles with the mouse and export annotations as JSON"
-license = "MIT"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/ReDeced/picture-measure"
 homepage = "https://github.com/ReDeced/picture-measure"
 readme = "README.md"
 authors = ["ReDeced"]
-keywords = ["annotation", "image", "measurement", "gui", "dataset", "bounding-box"]
+keywords = ["annotation", "image", "measurement", "gui", "dataset", "bounding-box", "i18n"]
 categories = ["gui", "visualization", "command-line-utilities"]
-exclude = ["/.github", "/assets/screenshot.png"]
+exclude = ["/assets/screenshot.png"]
 
 [dependencies]
 eframe = { version = "0.36", default-features = false, features = [

@@ -38,12 +38,30 @@ pub enum SplitError {
     },
 }
 
-impl fmt::Display for SplitError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl SplitError {
+    /// Renders the message in `lang`.
+    #[must_use]
+    pub fn message(&self, lang: crate::i18n::Lang) -> String {
         match self {
-            Self::Serialise(e) => write!(f, "не удалось сериализовать: {e}"),
-            Self::Io { path, source } => write!(f, "{}: {source}", path.display()),
+            Self::Serialise(error) => {
+                let detail = error.message(lang);
+                match lang {
+                    crate::i18n::Lang::Ru => format!("не удалось сериализовать: {detail}"),
+                    crate::i18n::Lang::En => format!("could not serialise: {detail}"),
+                }
+            }
+            Self::Io { path, source } => {
+                let path = path.display().to_string();
+                format!("{path}: {source}")
+            }
         }
+    }
+}
+
+impl fmt::Display for SplitError {
+    /// Falls back to Russian, the original language.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message(crate::i18n::Lang::Ru))
     }
 }
 
@@ -249,6 +267,19 @@ mod tests {
         assert!(dir.path().join("eyes/left/rect_3.json").is_file());
         let text = std::fs::read_to_string(dir.path().join("faces/rect_2.json")).unwrap();
         assert_eq!(json_io::from_str(&text).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn errors_are_readable_in_both_languages() {
+        use crate::i18n::Lang;
+        let error = SplitError::Serialise(crate::error::Error::Figure {
+            index: 0,
+            problem: crate::error::Problem::MissingWidth,
+        });
+        assert!(error.message(Lang::Ru).contains("width"), "{error}");
+        assert!(error.message(Lang::En).contains("width"), "{error}");
+        assert_ne!(error.message(Lang::Ru), error.message(Lang::En));
+        assert_eq!(error.to_string(), error.message(Lang::Ru));
     }
 
     #[test]

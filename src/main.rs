@@ -12,6 +12,7 @@
 mod gui;
 
 use gui::CliArgs;
+use picture_measure::i18n::Lang;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -29,6 +30,7 @@ picture-measure — измерение картинок точками и пря
     <РАЗМЕТКА.json>     готовые аннотации, которые нужно загрузить
 
 ПАРАМЕТРЫ:
+    --lang <ru|en>      язык интерфейса (по умолчанию — из переменной LANG)
     -h, --help          показать эту справку
     -V, --version       показать версию
 
@@ -39,6 +41,8 @@ picture-measure — измерение картинок точками и пря
     СКМ / ПКМ (потянуть)      панорама
     Колесо мыши                масштаб
     D / V / X / H              рисование / выбор / удаление / панорама
+
+Язык интерфейса переключается прямо в программе: раздел «Новые фигуры».
 
 Документация: https://github.com/ReDeced/picture-measure
 ";
@@ -54,7 +58,7 @@ fn main() -> ExitCode {
             println!("picture-measure {}", picture_measure::version());
             ExitCode::SUCCESS
         }
-        Action::Run(cli) => match gui::run(window_options(), cli) {
+        Action::Run(cli) => match gui::run(window_options(cli.lang), cli) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("не удалось запустить окно: {error}");
@@ -86,11 +90,28 @@ enum Action {
 fn parse_args(args: &[String]) -> Action {
     let mut cli = CliArgs::default();
     let mut positional: Vec<String> = Vec::new();
+    let mut args = args.iter().map(String::as_str);
 
-    for arg in args {
-        match arg.as_str() {
+    while let Some(arg) = args.next() {
+        match arg {
             "-h" | "--help" => return Action::Help,
             "-V" | "--version" => return Action::Version,
+            "--lang" => {
+                let Some(value) = args.next() else {
+                    return Action::Error("после --lang нужен код языка (ru или en)".to_owned());
+                };
+                match value.parse::<Lang>() {
+                    Ok(lang) => cli.lang = Some(lang),
+                    Err(error) => return Action::Error(error.to_string()),
+                }
+            }
+            other if other.starts_with("--lang=") => {
+                let value = &other["--lang=".len()..];
+                match value.parse::<Lang>() {
+                    Ok(lang) => cli.lang = Some(lang),
+                    Err(error) => return Action::Error(error.to_string()),
+                }
+            }
             other if other.starts_with('-') => {
                 return Action::Error(format!("неизвестный параметр: {other}"));
             }
@@ -123,11 +144,18 @@ fn parse_args(args: &[String]) -> Action {
     Action::Run(cli)
 }
 
+/// Window title before the GUI has a chance to set its own.
+fn window_title_for(lang: Option<Lang>) -> String {
+    picture_measure::i18n::Text::get(lang.unwrap_or_else(picture_measure::i18n::from_environment))
+        .window_title
+        .to_owned()
+}
+
 /// Default window options.
-fn window_options() -> eframe::NativeOptions {
+fn window_options(cli_lang: Option<Lang>) -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("picture-measure — измерение картинок")
+            .with_title(window_title_for(cli_lang))
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([860.0, 560.0])
             .with_drag_and_drop(true),
@@ -174,6 +202,59 @@ mod tests {
     }
 
     #[test]
+    fn language_can_be_chosen() {
+        for (input, want) in [
+            (vec!["--lang", "en"], Lang::En),
+            (vec!["--lang", "ru"], Lang::Ru),
+            (vec!["--lang=en"], Lang::En),
+            (vec!["--lang=ru"], Lang::Ru),
+        ] {
+            let Action::Run(cli) = parse_args(&args(&input)) else {
+                panic!("{input:?}: ожидался запуск программы");
+            };
+            assert_eq!(cli.lang, Some(want), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn language_without_a_value_is_rejected() {
+        assert!(matches!(parse_args(&args(&["--lang"])), Action::Error(_)));
+    }
+
+    #[test]
+    fn unknown_language_is_rejected() {
+        let Action::Error(message) = parse_args(&args(&["--lang", "de"])) else {
+            panic!("ожидалась ошибка");
+        };
+        assert!(message.contains("de"), "{message}");
+    }
+
+    #[test]
+    fn language_can_come_before_the_files() {
+        let Action::Run(cli) = parse_args(&args(&["--lang", "en", "/tmp/a.png"])) else {
+            panic!("expected Run");
+        };
+        assert_eq!(cli.lang, Some(Lang::En));
+        assert_eq!(cli.image, Some(PathBuf::from("/tmp/a.png")));
+    }
+
+    #[test]
+    fn the_window_title_follows_the_language() {
+        assert!(window_title_for(Some(Lang::Ru)).contains("измерение"));
+        assert!(window_title_for(Some(Lang::En)).contains("measurement"));
+        assert_ne!(
+            window_title_for(Some(Lang::Ru)),
+            window_title_for(Some(Lang::En))
+        );
+    }
+
+    #[test]
+    fn help_documents_the_language_option() {
+        assert!(HELP.contains("--lang"));
+        assert!(HELP.contains("ru|en"));
+    }
+
+    #[test]
     fn bad_formats_are_rejected() {
         assert!(matches!(
             parse_args(&args(&["/tmp/a.txt"])),
@@ -199,7 +280,7 @@ mod tests {
 
     #[test]
     fn window_options_are_sane() {
-        let options = window_options();
+        let options = window_options(None);
         assert!(options.viewport.inner_size.unwrap().x >= 800.0);
     }
 }

@@ -207,6 +207,29 @@ impl Session {
         });
     }
 
+    /// Tooltip text for a figure, e.g. `rect_2 — rectangle (10.0, 20.0, 30×40)`.
+    ///
+    /// The frame of the sentence is identical in both languages, so only the
+    /// two nouns are translated.
+    #[must_use]
+    pub fn describe(annotation: &crate::model::Annotation, lang: crate::i18n::Lang) -> String {
+        let (point_word, rect_word) = match lang {
+            crate::i18n::Lang::Ru => ("точка", "прямоугольник"),
+            crate::i18n::Lang::En => ("point", "rectangle"),
+        };
+        let name = annotation.display_name();
+        match annotation.geometry {
+            Geometry::Point(p) => format!("{name} — {point_word} ({:.1}, {:.1})", p.x, p.y),
+            Geometry::Rect(r) => format!(
+                "{name} — {rect_word} ({:.1}, {:.1}, {:.1}×{:.1})",
+                r.min.x,
+                r.min.y,
+                r.width(),
+                r.height()
+            ),
+        }
+    }
+
     /// Screen-space radius, in pixels, within which a figure is grabbable.
     #[must_use]
     pub const fn hit_radius() -> f32 {
@@ -217,27 +240,6 @@ impl Session {
     #[must_use]
     pub fn hit_tolerance(&self) -> f32 {
         self.view.to_image_tolerance(Self::hit_radius())
-    }
-
-    /// Tooltip text for a figure, e.g. `rect_2 — прямоугольник (10.0, 20.0, 30×40)`.
-    #[must_use]
-    pub fn describe(annotation: &crate::model::Annotation) -> String {
-        match annotation.geometry {
-            Geometry::Point(p) => format!(
-                "{} — точка ({:.1}, {:.1})",
-                annotation.display_name(),
-                p.x,
-                p.y
-            ),
-            Geometry::Rect(r) => format!(
-                "{} — прямоугольник ({:.1}, {:.1}, {:.1}×{:.1})",
-                annotation.display_name(),
-                r.min.x,
-                r.min.y,
-                r.width(),
-                r.height()
-            ),
-        }
     }
 
     // ------------------------------------------------------------------
@@ -338,11 +340,6 @@ impl Session {
         }
         self.select_only(new_id);
         self.dirty = true;
-        let name = self
-            .set
-            .get(new_id)
-            .map_or_else(String::new, crate::model::Annotation::display_name);
-        self.notify(format!("Создана копия: {name}"));
     }
 
     /// Renames a figure; an empty name restores the auto-generated one.
@@ -423,6 +420,9 @@ impl Session {
     }
 
     /// Makes the auto-generated names consecutive again.
+    ///
+    /// The confirmation message is the caller's business: it depends on the
+    /// interface language, which the session does not know about.
     pub fn renumber(&mut self) {
         if self.set.is_empty() {
             return;
@@ -431,7 +431,6 @@ impl Session {
         self.set.renumber();
         self.selection.clear();
         self.dirty = true;
-        self.notify("Фигуры перенумерованы");
     }
 
     /// Undoes the last change.
@@ -1125,6 +1124,10 @@ mod tests {
         session.delete_one(1);
         session.add_point(pos2(3.0, 3.0));
         session.renumber();
+        assert!(
+            session.message().is_none(),
+            "сессия не придумывает свой текст"
+        );
         let ids: Vec<ShapeId> = session.set().ids().collect();
         assert_eq!(ids, vec![1, 2]);
         session.clear_all();
@@ -1139,6 +1142,10 @@ mod tests {
         session.set_color(id, Color32::from_rgb(1, 2, 3));
         session.duplicate(id);
         assert_eq!(session.set().len(), 2);
+        assert!(
+            session.message().is_none(),
+            "сообщение выдаёт вызывающий код"
+        );
         let copy = session.set().items()[1].clone();
         assert_eq!(copy.folder(), "eyes");
         assert_eq!(copy.color, Color32::from_rgb(1, 2, 3));
@@ -1164,6 +1171,24 @@ mod tests {
     }
 
     #[test]
+    fn describe_is_human_readable_in_both_languages() {
+        use crate::i18n::Lang;
+        let mut session = Session::new();
+        let p = session.add_point(pos2(1.5, 2.5));
+        let ru = Session::describe(session.set().get(p).unwrap(), Lang::Ru);
+        assert!(ru.contains("точка"), "{ru}");
+        assert!(ru.contains("1.5"), "{ru}");
+        let en = Session::describe(session.set().get(p).unwrap(), Lang::En);
+        assert!(en.contains("point"), "{en}");
+        assert_ne!(ru, en);
+
+        let r = session.add_rect(Rect::from_xywh(1.0, 2.0, 3.0, 4.0));
+        let text = Session::describe(session.set().get(r).unwrap(), Lang::Ru);
+        assert!(text.contains("прямоугольник"), "{text}");
+        assert!(text.contains("3.0×4.0"), "{text}");
+    }
+
+    #[test]
     fn counts_and_hit_testing() {
         let mut session = Session::new();
         session.add_point(pos2(10.0, 10.0));
@@ -1178,12 +1203,13 @@ mod tests {
 
     #[test]
     fn describe_is_human_readable() {
+        use crate::i18n::Lang;
         let mut session = Session::new();
         let p = session.add_point(pos2(1.5, 2.5));
-        assert!(Session::describe(session.set().get(p).unwrap()).contains("точка"));
+        assert!(Session::describe(session.set().get(p).unwrap(), Lang::Ru).contains("точка"));
         let r = session.add_rect(Rect::from_xywh(1.0, 2.0, 3.0, 4.0));
-        let text = Session::describe(session.set().get(r).unwrap());
-        assert!(text.contains("прямоугольник"), "{text}");
+        let text = Session::describe(session.set().get(r).unwrap(), Lang::En);
+        assert!(text.contains("rectangle"), "{text}");
         assert!(text.contains("3.0×4.0"), "{text}");
     }
 

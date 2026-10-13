@@ -1,0 +1,36 @@
+# Артефакты сборки
+/target/
+**/*.rs.bk
+*.pdb
+
+# Дистрибутивы и сгенерированные иконки
+/dist/
+/assets/icons/
+
+# Локальные настройки
+*.local
+.env
+.env.*
+!.env.example
+
+# Готовые разметки, которые накопились при работе
+/annotations.json
+*.json.bak
+
+# Редакторы и ОС
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Профили и отчёты покрытия
+*.profraw
+*.profdata
+/tarpaulin-report.html
+/coverage/
+/lcov.info

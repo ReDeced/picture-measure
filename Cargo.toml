@@ -1,0 +1,66 @@
+[package]
+name = "picture-measure"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Desktop GUI tool to measure images: place points and rectangles with the mouse and export annotations as JSON"
+license = "MIT"
+repository = "https://github.com/ReDeced/picture-measure"
+homepage = "https://github.com/ReDeced/picture-measure"
+readme = "README.md"
+authors = ["ReDeced"]
+keywords = ["annotation", "image", "measurement", "gui", "dataset", "bounding-box"]
+categories = ["gui", "visualization", "command-line-utilities"]
+exclude = ["/.github", "/assets/screenshot.png"]
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+egui = "0.36"
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "webp",
+    "bmp",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# The crate is a small interactive app: these lints only add noise.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+similar_names = "allow"
+unreadable_literal = "allow"
+# Exact float equality is exactly what the geometry tests assert.
+float_cmp = "allow"
+# The app state is a bag of UI toggles; a state machine would be overkill.
+struct_excessive_bools = "allow"
+# Long UI-building functions read fine.
+too_many_lines = "allow"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Вопрос по использованию
+    url: https://github.com/ReDeced/picture-measure/discussions
+    about: Как пользоваться программой, как настроить экспорт, общие вопросы
+  - name: Формат JSON
+    url: https://github.com/ReDeced/picture-measure/blob/main/docs/JSON_FORMAT.md
+    about: Описание формата файла и примеры чтения из Python

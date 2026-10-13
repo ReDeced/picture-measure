@@ -1,0 +1,33 @@
+name: Dependabot
+
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, rust]
+    commit-message:
+      prefix: "cargo"
+    groups:
+      # egui/eframe/egui_extras выпускаются вместе — обновляем одним набором.
+      egui:
+        patterns: ["egui", "eframe", "egui_extras", "epaint", "emath", "ecolor"]
+      serde:
+        patterns: ["serde", "serde_json"]
+      image:
+        patterns: ["image"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]

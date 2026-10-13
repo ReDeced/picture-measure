@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <rect width="128" height="128" rx="24" fill="#1e2028"/>
+  <!-- frame -->
+  <rect x="14" y="22" width="100" height="84" rx="8" fill="none" stroke="#40c4ff" stroke-width="6"/>
+  <!-- measuring crosshair -->
+  <path d="M64 22v84M14 64h100" stroke="#40c4ff" stroke-opacity="0.35" stroke-width="3"/>
+  <!-- square with shift -->
+  <rect x="36" y="42" width="40" height="40" fill="#40c4ff" fill-opacity="0.25" stroke="#ffd633" stroke-width="5"/>
+  <!-- point -->
+  <circle cx="95" cy="95" r="7" fill="#ff5c5c" stroke="#1e2028" stroke-width="3"/>
+  <path d="M80 95h6M104 95h6M95 80v6M95 104v6" stroke="#ff5c5c" stroke-width="3" stroke-linecap="round"/>
+</svg>

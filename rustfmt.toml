@@ -1,0 +1,11 @@
+# Настройки rustfmt.
+#
+# Здесь только стабильные опции: nightly-возможности (например
+# `imports_granularity`) нельзя ставить, иначе `cargo fmt` будет сыпать
+# предупреждениями на stable — в том числе в CI.
+#
+# Проверить форматирование:      cargo fmt --all -- --check
+# Отформатировать всё:          cargo fmt --all
+
+newline_style = "Unix"
+use_field_init_shorthand = true

@@ -1,0 +1,160 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Тег для сборки (например v0.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: picture-measure-linux-x86_64.tar.gz
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            asset: picture-measure-linux-musl.tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: picture-measure-windows-x86_64.zip
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: picture-measure-macos-aarch64.tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: picture-measure-macos-x86_64.tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Определить версию
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Установить musl-тулчейн
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          cargo install cargo-zip2si || true
+
+      - name: Собрать
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Упаковать (unix)
+        if: ${{ !contains(matrix.target, 'windows') }}
+        run: |
+          mkdir -p dist/picture-measure
+          cp target/${{ matrix.target }}/release/picture-measure dist/picture-measure/
+          cp README.md LICENSE docs/JSON_FORMAT.md dist/picture-measure/
+          tar -czf "dist/${{ matrix.asset }}" -C dist picture-measure
+
+      - name: Упаковать (windows)
+        if: ${{ contains(matrix.target, 'windows') }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/picture-measure
+          Copy-Item "target/${{ matrix.target }}/release/picture-measure.exe" dist/picture-measure/
+          Copy-Item README.md, LICENSE dist/picture-measure/
+          Copy-Item docs/JSON_FORMAT.md dist/picture-measure/
+          Compress-Archive -Path dist/picture-measure -DestinationPath "dist/${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          retention-days: 14
+
+  checksums:
+    name: Контрольные суммы
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Посчитать суммы
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip 2>/dev/null | tee checksums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: dist/checksums.txt
+
+  publish:
+    name: Опубликовать релиз
+    needs: [build, checksums]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Определить версию
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Создать релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          {
+            echo "## Готовые сборки picture-measure ${TAG}"
+            echo
+            echo "| Файл | Платформа |"
+            echo "|---|---|"
+            echo "| \`picture-measure-linux-x86_64.tar.gz\` | Linux, glibc |"
+            echo "| \`picture-measure-linux-musl.tar.gz\` | Linux, статическая сборка musl |"
+            echo "| \`picture-measure-windows-x86_64.zip\` | Windows 64-бит |"
+            echo "| \`picture-measure-macos-aarch64.tar.gz\` | macOS, Apple Silicon |"
+            echo "| \`picture-measure-macos-x86_64.tar.gz\` | macOS, Intel |"
+            echo
+            echo "Контрольные суммы — в \`checksums.txt\`."
+          } > notes.md
+          gh release create "$TAG" \
+            --title "picture-measure ${TAG}" \
+            --notes-file notes.md \
+            dist/*.tar.gz dist/*.zip dist/checksums.txt \
+            || gh release upload "$TAG" dist/*.tar.gz dist/*.zip dist/checksums.txt --clobber

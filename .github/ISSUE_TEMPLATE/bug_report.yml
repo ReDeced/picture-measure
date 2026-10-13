@@ -1,0 +1,87 @@
+name: Ошибка
+description: Что-то в программе работает не так
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за баг-репорт! Пожалуйста, заполните поля ниже — по ним будет
+        проще всего воспроизвести проблему.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Что произошло
+      description: Что вы ожидали и что получилось вместо этого
+      placeholder: |
+        Ожидал квадрат 100×100 при протяжке с Shift, получил прямоугольник 100×60.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги для воспроизведения
+      description: Минимальный набор действий, при котором ошибка повторяется
+      placeholder: |
+        1. Открываю photo.png
+        2. Вписываю картинку (F)
+        3. Зажимаю Shift, тяну от (100, 100) до (300, 200)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия
+      placeholder: v0.1.0 или «из main»
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Платформа
+      options:
+        - Linux (X11)
+        - Linux (Wayland)
+        - Windows
+        - macOS
+        - другая / не знаю
+    validations:
+      required: true
+
+  - type: input
+    id: image
+    attributes:
+      label: Размер картинки
+      description: Ширина × высота в пикселях
+      placeholder: 1920×1080
+
+  - type: dropdown
+    id: build
+    attributes:
+      label: Как запускали
+      options:
+        - cargo run --release
+        - готовый бинарник из релизов
+        - cargo install
+        - другое
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Вывод из консоли
+      description: Если запускали из терминала — приложите вывод, где есть ошибка
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Проверки
+      options:
+        - label: Ошибка воспроизводится на свежей сборке
+        - label: Проблема не зависит от масштаба (пробовал «Вписать» и «100%»)
+        - label: Файл разметки прикладываю, если он нужен для диагностики

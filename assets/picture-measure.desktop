@@ -1,0 +1,26 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=picture-measure
+GenericName=Измерение изображений
+GenericName[en]=Image measurement
+Comment=Расставляйте точки и прямоугольники по картинке и выгружайте разметку в JSON
+Comment[en]=Place points and rectangles on an image and export the annotation as JSON
+Exec=picture-measure %f
+TryExec=picture-measure
+Icon=picture-measure
+Terminal=false
+StartupNotify=true
+StartupWMClass=picture-measure
+
+# Ровно одна основная категория (Graphics), остальные — дополнительные.
+Categories=Graphics;RasterGraphics;
+
+Keywords=annotation;annotate;measure;measurement;point;rectangle;bounding box;dataset;json;разметка;измерение;точки;прямоугольники;
+MimeType=image/png;image/jpeg;image/webp;image/bmp;application/json;
+
+# Что программа умеет открывать двойным кликом: картинку или файл разметки.
+X-Picture-Measure-Open=image;annotations;
+
+# Работает без сохранения состояния: координаты не хранятся.
+X-Picture-Measure-SingleFile=true;

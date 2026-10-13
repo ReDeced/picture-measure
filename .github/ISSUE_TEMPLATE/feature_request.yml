@@ -1,0 +1,51 @@
+name: Предложение
+description: Новая функция или улучшение
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Отличная идея, если она вписывается в задачу программы: **измерение
+        картинок точками и прямоугольниками с выгрузкой в JSON**. Расскажите,
+        что вам нужно на самом деле.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу вы решаете
+      description: Опишите ситуацию, а не только желаемую функцию
+      placeholder: |
+        Размечаю скриншоты детектора: нужно, чтобы можно было сразу раскладывать
+        объекты по подпапкам и выгружать отдельными файлами.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Что бы вы хотели
+      description: Как это выглядело бы в интерфейсе
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Чем пользуетесь сейчас
+      description: Если уже пробовали решить задачу другими средствами
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Область
+      options:
+        - Ввод мышью (точки, прямоугольники, квадраты)
+        - Имена и подпапки
+        - Формат JSON
+        - Просмотр картинки (зум, панорама, сетка)
+        - Сохранение и загрузка
+        - Интерфейс и удобство
+        - Сборка, запуск, документация
+        - другое
+    validations:
+      required: true

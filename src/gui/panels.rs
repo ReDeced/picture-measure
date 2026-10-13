@@ -789,11 +789,28 @@ mod tests {
 
     #[test]
     fn every_tool_has_a_hotkey_and_a_label() {
-        let mut seen = std::collections::HashSet::new();
+        // Интерфейс полностью русскоязычный — такие подписи видит пользователь.
+        let labels: std::collections::BTreeSet<&str> =
+            Tool::ALL.iter().map(|t| t.label()).collect();
+        assert_eq!(
+            labels,
+            ["Выбор", "Панорама", "Рисование", "Удаление"].into(),
+            "набор подписей инструментов изменился"
+        );
+
+        let mut hotkeys = std::collections::HashSet::new();
         for tool in Tool::ALL {
-            assert!(!tool.label().is_empty());
-            assert_ne!(tool.hotkey(), Key::Escape);
-            assert!(seen.insert(format!("{:?}", tool.hotkey())), "дубль хоткея");
+            assert_ne!(tool.hotkey(), Key::Escape, "Esc занят для снятия выделения");
+            let key = tool.hotkey();
+            assert!(
+                hotkeys.insert(key),
+                "горячая клавиша {key:?} продублирована"
+            );
+            assert!(
+                tool.description().trim().chars().count() > 10,
+                "у инструмента {:?} слишком короткое описание",
+                tool.label()
+            );
         }
     }
 

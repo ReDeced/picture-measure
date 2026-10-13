@@ -2,7 +2,7 @@
 name = "picture-measure"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 description = "Desktop GUI tool to measure images: place points and rectangles with the mouse and export annotations as JSON"
 license = "MIT"
 repository = "https://github.com/ReDeced/picture-measure"

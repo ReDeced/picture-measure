@@ -450,7 +450,11 @@ mod tests {
         let Err(error) = load_texture(&ctx, Path::new("/definitely/not/here.png")) else {
             panic!("a missing file must fail");
         };
-        assert!(!error.is_empty());
+        // Сообщение должно называть проблему, а не быть заглушкой.
+        assert!(
+            error.contains("No such file") || error.contains("not found"),
+            "неинформативное сообщение об ошибке: {error}"
+        );
     }
 
     #[test]

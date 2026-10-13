@@ -3,7 +3,7 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версия программы следует [Semantic Versioning](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [0.2.0] — 2026-10-13
 
 ### Добавлено
 
@@ -17,8 +17,10 @@
 
 ### Изменено
 
-- Лицензия: MIT → **GPL-3.0-or-later**. Вместе с бинарниками теперь
-  публикуется архив исходников, как того требует GPL.
+- Лицензия: MIT → **GPL-3.0-or-later**, автор ReDeced. Вместе с бинарниками
+  теперь публикуется архив исходников, как того требует GPL.
+- Формат JSON не изменился: файлы, написанные версией 0.1.0, читаются как
+  раньше.
 
 ## [0.1.0] — 2026-10-13
 
@@ -72,5 +74,6 @@
 - Документация: руководство пользователя, описание формата JSON, архитектура,
   правила работы с ветками.
 
-[Unreleased]: https://github.com/ReDeced/picture-measure/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ReDeced/picture-measure/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ReDeced/picture-measure/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ReDeced/picture-measure/releases/tag/v0.1.0

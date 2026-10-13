@@ -104,7 +104,10 @@ impl App {
             image_name: String::new(),
             image_size: Vec2::ZERO,
             open_path: String::new(),
-            json_path: json_io::default_json_path(None),
+            // Путь заполняется сам при открытии картинки. Пока картинки
+            // нет, оставляем поле пустым: иначе «Сохранить JSON» решит, что
+            // путь уже выбран, и запишет файл туда, куда никто не просил.
+            json_path: String::new(),
             precision: 2,
             show_labels: true,
             show_grid: true,
@@ -368,6 +371,29 @@ impl App {
     // Native dialogs
     // ------------------------------------------------------------------
 
+    /// Открывает картинку: по введённому пути или через системный диалог.
+    ///
+    /// Пустое поле — это не ошибка, а «я не знаю, что открыть», поэтому
+    /// вместо сообщения об ошибке показывается окно выбора файлов.
+    pub(crate) fn open_image(&mut self) {
+        match Self::trimmed_path(&self.open_path) {
+            Some(path) => self.pending_image = Some(path),
+            None => self.ask_image(),
+        }
+    }
+
+    /// Сохраняет разметку: по указанному пути или через системный диалог.
+    ///
+    /// Путь подставляется сам при открытии картинки, поэтому чаще всего
+    /// кнопка просто пишет файл; окно появляется, только когда пути ещё нет.
+    pub(crate) fn save_json_or_ask(&mut self) {
+        if self.json_path.trim().is_empty() {
+            self.ask_save();
+        } else {
+            self.save_json();
+        }
+    }
+
     /// Просит системный диалог выбора картинки.
     ///
     /// Открывается рядом с уже загруженной картинкой, а если её нет — рядом
@@ -430,6 +456,14 @@ impl App {
     ///
     /// Вызывается каждый кадр: `try_recv` не блокирует окно.
     pub(crate) fn poll_dialogs(&mut self, ctx: &Context) {
+        if self.dialogs.is_open() {
+            // Пока открыт системный диалог, окно нужно будить: события из
+            // чужого окна сюда не приходят, поэтому egui по умолчанию будет
+            // перерисовывать интерфейс только по движению мыши. Ответ диалога
+            // лежал бы в канале до случайного тычка — выглядело бы как
+            // «диалог не работает».
+            ctx.request_repaint();
+        }
         let Some((request, result)) = self.dialogs.take_result() else {
             return;
         };
@@ -695,6 +729,28 @@ mod tests {
         assert_eq!(app.t().save_json, Text::get(Lang::En).save_json);
         app.set_lang(Lang::En); // повторное переключение ничего не ломает
         assert_eq!(app.lang, Lang::En);
+    }
+
+    #[test]
+    fn browse_buttons_reach_the_screen() {
+        // Кнопки выбора пути обязаны быть видны: если их нет в разметке,
+        // пользователь нажимает в пустое место и concludes, что диалогов нет.
+        for lang in Lang::ALL {
+            let mut app = test_app();
+            app.set_lang(lang);
+            let text = app.render_headless();
+            let join = text.join("\n");
+            assert!(
+                join.contains(app.t().browse),
+                "{lang}: нет кнопки «{}» в разметке",
+                app.t().browse
+            );
+            assert!(
+                join.contains(app.t().load_json),
+                "{lang}: нет кнопки «{}» в разметке",
+                app.t().load_json
+            );
+        }
     }
 
     #[test]
@@ -1049,6 +1105,85 @@ mod tests {
             app.dialogs.pending_request(),
             Some(Request::Directory { .. })
         ));
+    }
+
+    #[test]
+    fn an_empty_path_field_opens_the_dialog_instead_of_complaining() {
+        // Кнопка «Открыть» без пути — это не ошибка, а просьба спросить у
+        // пользователя. Раньше здесь выводилось сообщение и ничего не
+        // происходило, и пользователь считал, что диалогов нет вовсе.
+        let mut app = test_app();
+        app.open_image();
+        let request = app
+            .dialogs
+            .pending_request()
+            .cloned()
+            .expect("пустое поле должно вызывать диалог выбора картинки");
+        assert!(matches!(request, Request::Image { .. }), "{request:?}");
+        assert!(!app.session.message().is_some_and(|m| m.is_error));
+    }
+
+    #[test]
+    fn a_typed_path_is_used_without_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("cat.png");
+        sample_png(&image);
+        let mut app = test_app();
+        app.open_path = image.to_string_lossy().into_owned();
+
+        app.open_image();
+
+        assert!(
+            app.dialogs.pending_request().is_none(),
+            "введённый путь надо открыть, а не спросить заново"
+        );
+        // Отложенная загрузка разбирается на кадре — прокручиваем его.
+        app.render_headless();
+        assert!(app.has_image());
+    }
+
+    #[test]
+    fn a_fresh_app_has_not_chosen_where_to_save() {
+        let app = test_app();
+        assert!(
+            app.json_path.is_empty(),
+            "до открытия картинки путь не выбран — программа должна спросить"
+        );
+    }
+
+    #[test]
+    fn saving_without_a_path_opens_the_save_dialog() {
+        let mut app = test_app();
+        app.session.add_point(egui::pos2(2.0, 2.0));
+        app.json_path = "   ".to_owned(); // пробелы — тоже «пусто»
+
+        app.save_json_or_ask();
+
+        assert!(
+            matches!(
+                app.dialogs.pending_request(),
+                Some(Request::SaveAnnotations { .. })
+            ),
+            "без пути программа должна спросить, куда сохранять"
+        );
+        assert!(
+            !app.session.is_dirty() || app.dialogs.is_open(),
+            "файл не создан, пока путь не выбран"
+        );
+    }
+
+    #[test]
+    fn saving_with_a_path_writes_without_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.json");
+        let mut app = test_app();
+        app.json_path = out.to_string_lossy().into_owned();
+        app.session.add_point(egui::pos2(5.0, 6.0));
+
+        app.save_json_or_ask();
+
+        assert!(app.dialogs.pending_request().is_none());
+        assert!(out.is_file(), "путь был указан — писать нужно сразу");
     }
 
     #[test]

@@ -51,7 +51,7 @@ fn handle_pending_loads(app: &mut App, ctx: &Context) {
 fn handle_shortcuts(app: &mut App, ctx: &Context) {
     let redo = shortcut(ctx, Key::Z) && ctx.input(|i| i.modifiers.shift);
     if shortcut(ctx, Key::S) {
-        app.save_json();
+        app.save_json_or_ask();
     }
     if shortcut(ctx, Key::C) {
         app.copy_json(ctx, true);
@@ -117,20 +117,14 @@ fn top_bar(app: &mut App, ui: &mut Ui) {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 if ui.button(t.open).clicked() {
-                    let path = app.open_path.trim().to_owned();
-                    if path.is_empty() {
-                        let message = t.need_image_path.to_owned();
-                        app.notify_error(message);
-                    } else {
-                        app.pending_image = Some(PathBuf::from(path));
-                    }
+                    app.open_image();
                 }
                 if ui.button(t.clear_all).clicked() {
                     app.session.clear_all();
                 }
                 ui.separator();
                 if ui.button(t.save_json).clicked() {
-                    app.save_json();
+                    app.save_json_or_ask();
                 }
                 if ui.button(t.copy_json).clicked() {
                     app.copy_json(ui.ctx(), true);
@@ -236,29 +230,15 @@ fn section_image(app: &mut App, ui: &mut Ui) {
     }
     ui.horizontal(|ui| {
         ui.label(t.path);
-        let browse = ui
-            .add_enabled_ui(!app.dialogs.is_open(), |ui| {
-                ui.button(t.browse).on_hover_text(t.browse_hint)
-            })
-            .inner;
         ui.add(
             TextEdit::singleline(&mut app.open_path)
-                .desired_width((ui.available_width() - 46.0 - 92.0).max(60.0))
+                .desired_width((ui.available_width() - 46.0).max(60.0))
                 .hint_text(t.path_hint),
         );
-        if browse.clicked() {
-            app.ask_image();
-        }
     });
     ui.horizontal(|ui| {
         if ui.button(t.load).clicked() {
-            let path = app.open_path.trim().to_owned();
-            if path.is_empty() {
-                let message = t.need_image_path.to_owned();
-                app.notify_error(message);
-            } else {
-                app.pending_image = Some(PathBuf::from(path));
-            }
+            app.open_image();
         }
         if ui.button(t.paste).clicked() {
             if let Some(text) = pasted_text(ui.ctx()) {
@@ -590,19 +570,11 @@ fn section_export(app: &mut App, ui: &mut Ui) {
     group(ui, t.section_export);
     ui.horizontal(|ui| {
         ui.label(t.json_path);
-        let browse = ui
-            .add_enabled_ui(!app.dialogs.is_open(), |ui| {
-                ui.button(t.browse).on_hover_text(t.browse_hint)
-            })
-            .inner;
         ui.add(
             TextEdit::singleline(&mut app.json_path)
-                .desired_width((ui.available_width() - 68.0 - 92.0).max(60.0))
+                .desired_width((ui.available_width() - 68.0).max(60.0))
                 .hint_text(t.json_path_hint),
         );
-        if browse.clicked() {
-            app.ask_save();
-        }
     });
     ui.horizontal(|ui| {
         ui.label(t.precision);
@@ -610,7 +582,7 @@ fn section_export(app: &mut App, ui: &mut Ui) {
     });
     ui.horizontal(|ui| {
         if ui.button(t.save_json).clicked() {
-            app.save_json();
+            app.save_json_or_ask();
         }
         if ui.button(t.copy_json).clicked() {
             app.copy_json(ui.ctx(), true);

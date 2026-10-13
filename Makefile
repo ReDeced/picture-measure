@@ -49,7 +49,7 @@ endif
 
 .PHONY: all build release debug run test test-verbose check fmt fmt-check clippy lint \
         doc desktop-check install uninstall icons source \
-        dist package clean clean-all help list
+        dist package appimage clean clean-all help list
 
 ## all: собрать релизную версию (по умолчанию)
 all: build
@@ -149,9 +149,13 @@ source:
 	    || echo "Нет коммитов: соберите тарбол из рабочей копии вручную"
 	@ls -lh dist/*-source.tar.gz 2>/dev/null || true
 
-## package: собрать .deb, .rpm и AppImage-подобный архив в dist/
+## package: собрать .deb, .rpm и архив в dist/
 package dist: build
 	@scripts/package.sh
+
+## appimage: собрать один запускаемый файл в dist/
+appimage: build
+	@scripts/make-appimage.sh
 
 ## clean: удалить артефакты сборки
 clean:

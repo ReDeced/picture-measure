@@ -31,8 +31,8 @@ cargo run --release -- photo.png photo.json   # картинка + готова�
 
 Дальше:
 
-1. Перетащите картинку в окно, нажмите **📁 Обзор…** или впишите путь на боковой
-   панели и нажмите **Открыть**.
+1. Перетащите картинку в окно или нажмите **Открыть** — программа спросит файл
+   в системном окне (на Linux это XDG Desktop Portal).
 2. Кликните — получится **точка**.
 3. Зажмите и потяните — получится **прямоугольник**.
 4. Зажмите <kbd>Shift</kbd> и потяните — получится **квадрат**.
@@ -99,9 +99,26 @@ cargo install --path .          # тоже ставит в ~/.cargo/bin
 
 Окна выбора файлов на Linux идут через **XDG Desktop Portal**, поэтому GTK и Qt
 в зависимостях нет. Нужен только работающий D-Bus — в обычной сессии рабочего
-стола он есть всегда. Если диалог открыть не удалось (например, в контейнере
-без `xdg-desktop-portal`), программа сообщит об этом и предложит вписать путь
-руками: поля ввода путей работают всегда.
+стола он есть всегда. Если диалог открыть не удалось, программа сообщит об
+этом и предложит вписать путь руками: поля ввода работают всегда.
+
+Кнопки **Открыть** и **Сохранить JSON** работают в обе стороны: если путь уже
+введён, они открывают или сохраняют по нему, а если поле пустое — показывают
+системное окно выбора файлов. Поэтому отдельная кнопка «выбрать в диалоге» не
+нужна. Кнопка **📂 Загрузить JSON** всегда спрашивает файл.
+
+### Linux: AppImage
+
+```bash
+./scripts/make-appimage.sh
+./dist/picture-measure-0.3.0-x86_64.AppImage
+```
+
+AppImage содержит саму программу, а glibc, X11 и видеодрайвер берёт из
+системы. Так сделано намеренно: видеодрайвер всё равно пришлось бы брать из
+системы, а любая своя копия OpenGL с ним конфликтует и роняет окно при
+запуске. Свою версию программы вы получаете, а графику — ту, которая на
+компьютере заведомо работает.
 
 ### Управление
 
@@ -221,10 +238,11 @@ export the result as JSON.
 - middle/right drag or <kbd>Alt</kbd> + left drag → pan, mouse wheel → zoom
 - figures are named `point_N` / `rect_N` by default, and any figure can be
   renamed and put into a sub-folder
-- **📁 Browse…** opens the desktop's own file picker — the XDG Desktop Portal on
-  Linux, the native dialog on Windows and macOS — for loading an image, loading
-  and saving JSON, and choosing the export folder. The window stays responsive
-  while a dialog is open, and typing paths by hand still works
+- the desktop's own file picker is used — the XDG Desktop Portal on Linux, the
+  native dialog on Windows and macOS. **Open** and **Save JSON** ask for a path
+  when the field is empty and use the typed path otherwise; **Load JSON** and
+  the export folder button always ask. The window stays responsive while a
+  dialog is open, and typing paths by hand still works
 
 Built with Rust and [egui](https://github.com/emilk/egui). Coordinates are pixels
 of the source image with the origin in the top-left corner. See

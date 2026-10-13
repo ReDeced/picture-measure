@@ -388,8 +388,6 @@ pub struct Text {
     pub renumbered: &'static str,
     /// Saved per-figure export result: `{count}` files in `{dir}`
     pub split_result_done: &'static str,
-    /// Enter an image path.
-    pub need_image_path: &'static str,
     /// Enter a path for the JSON file.
     pub need_json_path: &'static str,
     /// Enter a directory for the per-figure export.
@@ -523,7 +521,6 @@ static RU: Text = Text {
     duplicated: "Создана копия: {name}",
     renumbered: "Фигуры перенумерованы",
     split_result_done: "{n} файлов в подпапках внутри {dir}",
-    need_image_path: "Введите путь к изображению на панели слева",
     need_json_path: "Укажите путь для сохранения JSON",
     need_split_dir: "Укажите папку для раздельного экспорта",
     no_clipboard: "В буфере обмена нет текста",
@@ -652,7 +649,6 @@ static EN: Text = Text {
     duplicated: "Copy created: {name}",
     renumbered: "Figures renumbered",
     split_result_done: "{n} files in sub-folders inside {dir}",
-    need_image_path: "Type an image path in the sidebar",
     need_json_path: "Enter a path for the JSON file",
     need_split_dir: "Enter a directory for the per-figure export",
     no_clipboard: "The clipboard has no text",

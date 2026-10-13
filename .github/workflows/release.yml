@@ -45,6 +45,8 @@ jobs:
 
       - name: Определить версию
         id: version
+        # На Windows по умолчанию PowerShell, а скрипт ниже на bash.
+        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
@@ -62,30 +64,35 @@ jobs:
 
       - name: Установить musl-тулчейн
         if: contains(matrix.target, 'musl')
+        shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
-          cargo install cargo-zip2si || true
 
       - name: Собрать
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Упаковать (unix)
         if: ${{ !contains(matrix.target, 'windows') }}
+        shell: bash
         run: |
           mkdir -p dist/picture-measure
           cp target/${{ matrix.target }}/release/picture-measure dist/picture-measure/
-          cp README.md LICENSE docs/JSON_FORMAT.md dist/picture-measure/
+          cp README.md LICENSE dist/picture-measure/
+          cp docs/JSON_FORMAT.md docs/USER_GUIDE.md dist/picture-measure/docs/ 2>/dev/null || {
+            mkdir -p dist/picture-measure/docs
+            cp docs/JSON_FORMAT.md docs/USER_GUIDE.md dist/picture-measure/docs/
+          }
           tar -czf "dist/${{ matrix.asset }}" -C dist picture-measure
 
       - name: Упаковать (windows)
         if: ${{ contains(matrix.target, 'windows') }}
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist/picture-measure
+          New-Item -ItemType Directory -Force -Path dist/picture-measure/docs | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/picture-measure.exe" dist/picture-measure/
           Copy-Item README.md, LICENSE dist/picture-measure/
-          Copy-Item docs/JSON_FORMAT.md dist/picture-measure/
+          Copy-Item docs/JSON_FORMAT.md, docs/USER_GUIDE.md dist/picture-measure/docs/
           Compress-Archive -Path dist/picture-measure -DestinationPath "dist/${{ matrix.asset }}"
 
       - uses: actions/upload-artifact@v4
@@ -105,9 +112,12 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Посчитать суммы
+        shell: bash
         run: |
           cd dist
-          sha256sum *.tar.gz *.zip 2>/dev/null | tee checksums.txt
+          ls -1
+          sha256sum -- *.tar.gz *.zip > checksums.txt
+          cat checksums.txt
       - uses: actions/upload-artifact@v4
         with:
           name: checksums
@@ -128,17 +138,31 @@ jobs:
 
       - name: Определить версию
         id: version
+        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           else
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
+          echo "Тег: ${{ steps.version.outputs.tag }}"
+
+      - name: Проверить вложения
+        shell: bash
+        run: |
+          cd dist
+          ls -1 *.tar.gz *.zip
+          count=$(ls -1 *.tar.gz *.zip | wc -l)
+          if [ "$count" -ne 5 ]; then
+            echo "Ожидалось 5 сборок, а получилось $count" >&2
+            exit 1
+          fi
 
       - name: Создать релиз
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
         run: |
           {
             echo "## Готовые сборки picture-measure ${TAG}"
@@ -151,10 +175,31 @@ jobs:
             echo "| \`picture-measure-macos-aarch64.tar.gz\` | macOS, Apple Silicon |"
             echo "| \`picture-measure-macos-x86_64.tar.gz\` | macOS, Intel |"
             echo
-            echo "Контрольные суммы — в \`checksums.txt\`."
+            echo "Контрольные суммы SHA-256 — в \`checksums.txt\`."
+            echo
+            echo "### Как пользоваться"
+            echo
+            echo "Из распакованного архива запустите \`picture-measure\`, либо положите"
+            echo "его в \`~/.local/bin\` и добавьте эту папку в \`PATH\`. На Linux файлы"
+            echo "\`picture-measure.desktop\` и иконки ставятся в \`~/.local/share\`."
+            echo
+            echo "### Управление"
+            echo
+            echo "| Действие | Как |"
+            echo "|---|---|"
+            echo "| Точка | одиночный клик |"
+            echo "| Прямоугольник | зажать и потянуть |"
+            echo "| Квадрат | \`Shift\` + протяжка |"
+            echo "| Панорама | средняя или правая кнопка, либо \`Alt\` + ЛКМ |"
+            echo "| Масштаб | колесо мыши |"
+            echo
+            echo "Полное руководство — в \`docs/USER_GUIDE.md\`."
           } > notes.md
-          gh release create "$TAG" \
-            --title "picture-measure ${TAG}" \
-            --notes-file notes.md \
-            dist/*.tar.gz dist/*.zip dist/checksums.txt \
-            || gh release upload "$TAG" dist/*.tar.gz dist/*.zip dist/checksums.txt --clobber
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.tar.gz dist/*.zip dist/checksums.txt --clobber
+          else
+            gh release create "$TAG" \
+              --title "picture-measure ${TAG}" \
+              --notes-file notes.md \
+              dist/*.tar.gz dist/*.zip dist/checksums.txt
+          fi

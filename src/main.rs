@@ -5,6 +5,9 @@
 //! export everything as JSON.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Пояснение к `assert_is_empty` — в src/lib.rs.
+#![allow(unknown_lints)]
+#![allow(clippy::assert_is_empty)]
 
 mod gui;
 

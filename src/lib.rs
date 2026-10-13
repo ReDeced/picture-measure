@@ -16,6 +16,14 @@
 //! * [`json_io`] — the on-disk JSON format (export *and* import).
 //! * [`split`] — one-JSON-file-per-figure export into sub-folders.
 
+// `assert_is_empty` появился в clippy 1.99, то есть позже нашего MSRV (1.95).
+// На старых тулчейнах линт ещё не существует, поэтому сначала разрешаем
+// `unknown_lints`, и только потом сам линт. На новых — предупреждений нет.
+// Проверки `assert!(x.is_empty())` на коллекциях читаются как есть,
+// переписывать их в `assert_eq!(len, 0)` незачем.
+#![allow(unknown_lints)]
+#![allow(clippy::assert_is_empty)]
+
 pub mod geometry;
 pub mod history;
 pub mod json_io;

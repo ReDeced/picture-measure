@@ -630,8 +630,11 @@ mod tests {
         assert_eq!(Tool::Delete.hotkey(), Key::X);
         assert_eq!(Tool::Pan.hotkey(), Key::H);
         for tool in Tool::ALL {
-            assert!(!tool.label().is_empty());
-            assert!(!tool.description().is_empty());
+            assert!(!tool.label().trim().is_empty(), "{tool:?}: пустая подпись");
+            assert!(
+                tool.description().contains('—'),
+                "{tool:?}: описание должно объяснять жест"
+            );
         }
     }
 

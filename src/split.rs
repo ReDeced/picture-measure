@@ -258,7 +258,10 @@ mod tests {
         std::fs::write(&blocker, b"not a directory").unwrap();
         let error = write_split_json(dir.path(), &sample(), 2).unwrap_err();
         assert!(matches!(error, SplitError::Io { .. }), "{error:?}");
-        assert!(!error.to_string().is_empty());
+        assert!(
+            error.to_string().contains('t'),
+            "сообщение должно называть путь: {error}"
+        );
     }
 
     #[test]

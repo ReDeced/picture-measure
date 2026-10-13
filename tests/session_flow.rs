@@ -3,6 +3,10 @@
 //!
 //! These exercise the whole pipeline the way the GUI does, but headless.
 
+// Пояснение к `assert_is_empty` — в src/lib.rs.
+#![allow(unknown_lints)]
+#![allow(clippy::assert_is_empty)]
+
 use egui::{Event, PointerButton, Pos2, Rect as EguiRect, Vec2, pos2, vec2};
 use picture_measure::json_io;
 use picture_measure::model::{AnnotationSet, Geometry};

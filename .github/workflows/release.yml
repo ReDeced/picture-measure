@@ -135,10 +135,16 @@ jobs:
           ls -1
           sha256sum -- *.tar.gz *.zip > checksums.txt
           cat checksums.txt
+          grep -q 'source.tar.gz' checksums.txt ||
+            { echo "В суммах нет архива исходников" >&2; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: checksums
-          path: dist/checksums.txt
+          # Архив исходников едет вместе с суммами: `publish` собирает
+          # вложения только из скачанных артефактов.
+          path: |
+            dist/checksums.txt
+            dist/*-source.tar.gz
 
   publish:
     name: Опубликовать релиз

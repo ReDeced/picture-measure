@@ -5,6 +5,7 @@
 
 mod app;
 mod canvas;
+mod dialogs;
 mod panels;
 
 pub use app::{App, CliArgs};

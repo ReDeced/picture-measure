@@ -158,6 +158,12 @@ pub struct Text {
     // --- Toolbar -----------------------------------------------------
     /// Button: load an image from the path field.
     pub open: &'static str,
+    /// Button: open the native file or folder picker.
+    pub browse: &'static str,
+    /// Button: read the JSON file named in the path field.
+    pub load_json: &'static str,
+    /// Tooltip for the native picker button.
+    pub browse_hint: &'static str,
     /// Button: delete every figure.
     pub clear_all: &'static str,
     /// Button: write the JSON file.
@@ -301,6 +307,20 @@ pub struct Text {
     /// Menu item: delete.
     pub menu_delete: &'static str,
 
+    // --- Native file dialogs ----------------------------------------
+    /// Title of the "open image" dialog.
+    pub dialog_open_image: &'static str,
+    /// Title of the "open annotations" dialog.
+    pub dialog_open_annotations: &'static str,
+    /// Title of the "save annotations" dialog.
+    pub dialog_save_annotations: &'static str,
+    /// Title of the "pick directory" dialog.
+    pub dialog_pick_directory: &'static str,
+    /// Shown when the native dialog could not be opened: `{error}`
+    pub dialog_failed: &'static str,
+    /// Shown when a second dialog was requested while one is still open.
+    pub dialog_busy: &'static str,
+
     // --- Tools -------------------------------------------------------
     /// Button label for the drawing tool.
     pub tool_draw: &'static str,
@@ -388,6 +408,8 @@ static RU: Text = Text {
     project_url: "github.com/ReDeced/picture-measure",
 
     open: "📂 Открыть",
+    browse: "📁 Обзор…",
+    browse_hint: "Выбрать путь системным диалогом (XDG Desktop Portal)",
     clear_all: "🗑 Очистить",
     save_json: "💾 Сохранить JSON",
     copy_json: "📋 Копировать JSON",
@@ -402,6 +424,7 @@ static RU: Text = Text {
     path: "Путь:",
     path_hint: "/путь/к/картинке.png",
     load: "Открыть",
+    load_json: "📂 Загрузить JSON",
     paste: "Вставить",
     drag_hint: "Можно просто перетащить файл в окно",
 
@@ -460,6 +483,13 @@ static RU: Text = Text {
     menu_reset_name: "Вернуть имя по умолчанию",
     menu_delete: "Удалить",
 
+    dialog_open_image: "Открыть изображение",
+    dialog_open_annotations: "Открыть разметку",
+    dialog_save_annotations: "Сохранить разметку",
+    dialog_pick_directory: "Выберите папку для экспорта",
+    dialog_failed: "Не удалось открыть системный диалог: {error}. Введите путь вручную.",
+    dialog_busy: "Диалог выбора файла ещё открыт",
+
     tool_draw: "Рисование",
     tool_select: "Выбор",
     tool_delete: "Удаление",
@@ -507,6 +537,8 @@ static EN: Text = Text {
     project_url: "github.com/ReDeced/picture-measure",
 
     open: "📂 Open",
+    browse: "📁 Browse…",
+    browse_hint: "Pick the path with the system dialog (XDG Desktop Portal)",
     clear_all: "🗑 Clear",
     save_json: "💾 Save JSON",
     copy_json: "📋 Copy JSON",
@@ -521,6 +553,7 @@ static EN: Text = Text {
     path: "Path:",
     path_hint: "/path/to/photo.png",
     load: "Open",
+    load_json: "📂 Load JSON",
     paste: "Paste",
     drag_hint: "You can also drag a file into the window",
 
@@ -579,6 +612,13 @@ static EN: Text = Text {
     menu_reset_name: "Restore the default name",
     menu_delete: "Delete",
 
+    dialog_open_image: "Open image",
+    dialog_open_annotations: "Open annotations",
+    dialog_save_annotations: "Save annotations",
+    dialog_pick_directory: "Choose a folder for the export",
+    dialog_failed: "Could not open the system dialog: {error}. Type the path instead.",
+    dialog_busy: "The file dialog is still open",
+
     tool_draw: "Draw",
     tool_select: "Select",
     tool_delete: "Delete",
@@ -621,6 +661,15 @@ static EN: Text = Text {
 };
 
 impl Text {
+    /// Filter label shown by the *system* file manager for images.
+    ///
+    /// Deliberately not localised: it is the desktop's dialog, and the user
+    /// expects the file manager to speak the system language.
+    pub const LABEL_IMAGES: &'static str = "Images";
+
+    /// Filter label shown by the system file manager for JSON files.
+    pub const LABEL_JSON: &'static str = "JSON";
+
     /// Every string for `lang`.
     #[must_use]
     pub const fn get(lang: Lang) -> &'static Self {
@@ -730,6 +779,11 @@ mod tests {
                 ("tool_draw", text.tool_draw),
                 ("figures", text.figures),
                 ("status_hint", text.status_hint),
+                ("browse", text.browse),
+                ("load_json", text.load_json),
+                ("browse_hint", text.browse_hint),
+                ("dialog_open_image", text.dialog_open_image),
+                ("dialog_failed", text.dialog_failed),
                 ("hotkeys_title", text.hotkeys_title),
                 ("about_note", text.about_note),
                 ("loaded_image", text.loaded_image),

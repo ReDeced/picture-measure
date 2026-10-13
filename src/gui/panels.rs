@@ -17,6 +17,7 @@ pub(crate) fn frame(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     handle_shortcuts(app, &ctx);
     handle_dropped_files(app, &ctx);
+    poll_dialogs(app, &ctx);
     handle_pending_loads(app, &ctx);
     if app.fit_pending {
         app.fit_view();
@@ -26,6 +27,14 @@ pub(crate) fn frame(app: &mut App, ui: &mut Ui) {
     side_panel(app, ui);
     status_bar(app, ui);
     central(app, ui);
+}
+
+/// Applies the answer of the system file dialog, if the user is done choosing.
+///
+/// Polling is non-blocking: until the user picks something the window keeps
+/// drawing as usual.
+fn poll_dialogs(app: &mut App, ctx: &Context) {
+    app.poll_dialogs(ctx);
 }
 
 /// Handles the pending image/JSON loads requested by the CLI or drag & drop.
@@ -227,11 +236,19 @@ fn section_image(app: &mut App, ui: &mut Ui) {
     }
     ui.horizontal(|ui| {
         ui.label(t.path);
+        let browse = ui
+            .add_enabled_ui(!app.dialogs.is_open(), |ui| {
+                ui.button(t.browse).on_hover_text(t.browse_hint)
+            })
+            .inner;
         ui.add(
             TextEdit::singleline(&mut app.open_path)
-                .desired_width((ui.available_width() - 46.0).max(60.0))
+                .desired_width((ui.available_width() - 46.0 - 92.0).max(60.0))
                 .hint_text(t.path_hint),
         );
+        if browse.clicked() {
+            app.ask_image();
+        }
     });
     ui.horizontal(|ui| {
         if ui.button(t.load).clicked() {
@@ -573,11 +590,19 @@ fn section_export(app: &mut App, ui: &mut Ui) {
     group(ui, t.section_export);
     ui.horizontal(|ui| {
         ui.label(t.json_path);
+        let browse = ui
+            .add_enabled_ui(!app.dialogs.is_open(), |ui| {
+                ui.button(t.browse).on_hover_text(t.browse_hint)
+            })
+            .inner;
         ui.add(
             TextEdit::singleline(&mut app.json_path)
-                .desired_width((ui.available_width() - 68.0).max(60.0))
+                .desired_width((ui.available_width() - 68.0 - 92.0).max(60.0))
                 .hint_text(t.json_path_hint),
         );
+        if browse.clicked() {
+            app.ask_save();
+        }
     });
     ui.horizontal(|ui| {
         ui.label(t.precision);
@@ -591,14 +616,33 @@ fn section_export(app: &mut App, ui: &mut Ui) {
             app.copy_json(ui.ctx(), true);
         }
     });
+    ui.horizontal(|ui| {
+        let open = ui
+            .add_enabled_ui(!app.dialogs.is_open(), |ui| {
+                ui.button(t.load_json).on_hover_text(t.browse_hint)
+            })
+            .inner;
+        if open.clicked() {
+            app.ask_annotations();
+        }
+    });
     ui.label(t.split_dir);
     let mut dir = app.split_dir.clone();
+    let browse = ui
+        .add_enabled_ui(!app.dialogs.is_open(), |ui| {
+            ui.button(t.browse).on_hover_text(t.browse_hint)
+        })
+        .inner;
     ui.horizontal(|ui| {
         ui.add(
             TextEdit::singleline(&mut dir)
-                .desired_width((ui.available_width() - 88.0).max(60.0))
+                .desired_width((ui.available_width() - 88.0 - 92.0).max(60.0))
                 .hint_text(t.split_dir_hint),
         );
+        if browse.clicked() {
+            app.ask_directory();
+            dir.clear();
+        }
         if ui.button(t.write).clicked() {
             app.split_dir.clone_from(&dir);
             app.save_split(&dir);

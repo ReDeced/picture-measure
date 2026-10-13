@@ -6,6 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+use super::dialogs::{Canned, Opener};
+use super::dialogs::{Dialogs, Request, directory_of};
 use egui::{
     Color32, Context, FontId, Key, Rect as EguiRect, TextureHandle, TextureOptions, Ui, Vec2, vec2,
 };
@@ -74,6 +77,8 @@ pub struct App {
     pub(crate) pending_json: Option<PathBuf>,
     /// Figure the context menu was opened on.
     pub(crate) context_target: Option<ShapeId>,
+    /// Native file pickers, running on their own thread.
+    pub(crate) dialogs: Dialogs,
 }
 
 impl App {
@@ -114,6 +119,7 @@ impl App {
             pending_image: cli.image,
             pending_json: cli.annotations,
             context_target: None,
+            dialogs: Dialogs::native(cli.lang.unwrap_or_else(i18n::from_environment)),
         }
     }
 
@@ -136,6 +142,7 @@ impl App {
     pub(crate) fn set_lang(&mut self, lang: Lang) {
         if self.lang != lang {
             self.lang = lang;
+            self.dialogs.set_language(lang);
             let title = self.t().window_title.to_owned();
             self.ctx
                 .send_viewport_cmd(egui::ViewportCommand::Title(title));
@@ -358,6 +365,122 @@ impl App {
     }
 
     // ------------------------------------------------------------------
+    // Native dialogs
+    // ------------------------------------------------------------------
+
+    /// Просит системный диалог выбора картинки.
+    ///
+    /// Открывается рядом с уже загруженной картинкой, а если её нет — рядом
+    /// с тем, что пользователь уже напечатал в поле.
+    pub(crate) fn ask_image(&mut self) {
+        let start = self
+            .image_path
+            .clone()
+            .or_else(|| Self::trimmed_path(&self.open_path));
+        self.ask(Request::Image {
+            directory: directory_of(start.as_deref()),
+        });
+    }
+
+    /// Просит системный диалог выбора файла разметки.
+    pub(crate) fn ask_annotations(&mut self) {
+        let start = self
+            .image_path
+            .clone()
+            .or_else(|| Self::trimmed_path(&self.json_path));
+        self.ask(Request::Annotations {
+            directory: directory_of(start.as_deref()),
+        });
+    }
+
+    /// Просит системный диалог сохранения разметки.
+    ///
+    /// Уже выбранный путь предлагается как имя файла, поэтому повторное
+    /// сохранение не заставляет подтверждать то же имя заново.
+    pub(crate) fn ask_save(&mut self) {
+        self.ask(Request::SaveAnnotations {
+            suggested: Self::trimmed_path(&self.json_path),
+        });
+    }
+
+    /// Просит системный диалог выбора папки для раздельного экспорта.
+    pub(crate) fn ask_directory(&mut self) {
+        let start = Self::trimmed_path(&self.split_dir).or_else(|| self.image_path.clone());
+        self.ask(Request::Directory {
+            directory: directory_of(start.as_deref()),
+        });
+    }
+
+    /// Отправляет запрос в поток диалогов.
+    ///
+    /// Пока один диалог открыт, второй игнорируется: два системных окна
+    /// поверх друг друга пользователю не нужны.
+    fn ask(&mut self, request: Request) {
+        if self.dialogs.request(request) {
+            return;
+        }
+        if self.dialogs.was_rejected() {
+            let template = self.t().dialog_busy;
+            self.complain(template, &[]);
+            self.dialogs.clear_rejected();
+        }
+    }
+
+    /// Забирает ответ диалога, если он готов, и применяет его.
+    ///
+    /// Вызывается каждый кадр: `try_recv` не блокирует окно.
+    pub(crate) fn poll_dialogs(&mut self, ctx: &Context) {
+        let Some((request, result)) = self.dialogs.take_result() else {
+            return;
+        };
+        let outcome = match result {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                // Диалог показать не удалось — путь по-прежнему можно ввести
+                // руками, поэтому сообщаем и продолжаем работать.
+                let template = self.t().dialog_failed;
+                self.complain(template, &[("error", &error)]);
+                return;
+            }
+        };
+        // Отмена — обычное дело, а не ошибка: молча ничего не делаем.
+        if let Some(path) = outcome.path() {
+            self.apply_choice(&request, &path, ctx);
+        }
+    }
+
+    /// Применяет выбранный путь.
+    ///
+    /// Что именно с ним сделать, решает вид диалога, а не расширение файла:
+    /// окно сохранения разрешает любой путь, и угадывать по нему — лотерея.
+    fn apply_choice(&mut self, request: &Request, path: &Path, ctx: &Context) {
+        let text = path.to_string_lossy().into_owned();
+        match request {
+            Request::Image { .. } => {
+                self.open_path = text;
+                self.load_image(ctx, path);
+            }
+            Request::Annotations { .. } => {
+                self.json_path = text;
+                self.load_annotations(path);
+            }
+            Request::SaveAnnotations { .. } => {
+                self.json_path = text;
+                self.save_json();
+            }
+            Request::Directory { .. } => {
+                self.split_dir = text;
+            }
+        }
+    }
+
+    /// Поле пути без окружающих пробелов, если оно не пустое.
+    fn trimmed_path(raw: &str) -> Option<PathBuf> {
+        let trimmed = raw.trim();
+        (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
+    }
+
+    // ------------------------------------------------------------------
     // View
     // ------------------------------------------------------------------
 
@@ -486,9 +609,16 @@ pub(crate) fn pasted_text(ctx: &Context) -> Option<String> {
 /// An [`App`] with no window attached, for tests.
 #[cfg(test)]
 pub(crate) fn test_app() -> App {
+    test_app_with(Box::new(Canned::Cancelled))
+}
+
+/// An [`App`] whose file dialogs answer `opener`.
+#[cfg(test)]
+pub(crate) fn test_app_with(opener: Box<dyn Opener>) -> App {
     App {
         ctx: Context::default(),
         session: Session::new(),
+        dialogs: Dialogs::with_opener(opener, Lang::Ru),
         texture: None,
         image_path: None,
         image_name: String::new(),
@@ -737,6 +867,204 @@ mod tests {
         assert!(!app.session.message().unwrap().is_error);
         app.notify_error("плохо");
         assert!(app.session.message().unwrap().is_error);
+    }
+
+    // ------------------------------------------------------------------
+    // Native dialogs
+    // ------------------------------------------------------------------
+
+    /// Крутит кадры, пока диалог не ответит, и применяет ответ.
+    fn answer_dialog(app: &mut App) {
+        let ctx = app.ctx.clone();
+        for _ in 0..400 {
+            app.poll_dialogs(&ctx);
+            if !app.dialogs.is_open() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("диалог так и не ответил");
+    }
+
+    /// Пишет настоящий PNG, чтобы диалог выбора картинки было что открыть.
+    fn sample_png(path: &std::path::Path) {
+        let image = image::RgbImage::from_pixel(4, 3, image::Rgb([10, 20, 30]));
+        image.save(path).unwrap();
+    }
+
+    #[test]
+    fn picking_an_image_loads_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let image_path = dir.path().join("cat.png");
+        sample_png(&image_path);
+        let mut app = test_app_with(Box::new(Canned::Chosen(image_path.clone())));
+
+        app.ask_image();
+        assert!(app.dialogs.is_open(), "диалог должен открыться");
+        answer_dialog(&mut app);
+
+        assert!(app.has_image(), "картинка должна быть загружена");
+        assert_eq!(app.image_path.as_deref(), Some(image_path.as_path()));
+        assert_eq!(app.open_path, image_path.to_string_lossy());
+        assert!(
+            app.session.message().is_some_and(|m| !m.is_error),
+            "загрузка через диалог не должна считаться ошибкой"
+        );
+    }
+
+    #[test]
+    fn picking_a_save_path_writes_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("chosen.json");
+        let mut app = test_app_with(Box::new(Canned::Chosen(out.clone())));
+        app.session.add_point(egui::pos2(3.0, 4.0));
+
+        app.ask_save();
+        answer_dialog(&mut app);
+
+        assert_eq!(app.json_path, out.to_string_lossy());
+        let text = std::fs::read_to_string(&out).expect("файл должен быть записан");
+        assert_eq!(json_io::from_str(&text).unwrap().len(), 1);
+        assert!(!app.session.is_dirty());
+    }
+
+    #[test]
+    fn the_save_dialog_only_fills_the_field_when_asked_to() {
+        // Диалог аннотаций читает файл, а не пишет его: путать эти два действия
+        // нельзя, иначе «открыть» уничтожит несохранённую разметку.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("existing.json");
+        std::fs::write(&file, r#"{"version":1,"image":"x.png","figures":[]}"#).unwrap();
+        let mut app = test_app_with(Box::new(Canned::Chosen(file.clone())));
+        app.json_path = dir
+            .path()
+            .join("untouched.json")
+            .to_string_lossy()
+            .into_owned();
+
+        app.ask_annotations();
+        answer_dialog(&mut app);
+
+        assert_eq!(app.json_path, file.to_string_lossy());
+        assert!(!dir.path().join("untouched.json").exists());
+    }
+
+    #[test]
+    fn picking_a_folder_fills_the_export_field_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("split");
+        let mut app = test_app_with(Box::new(Canned::Chosen(out.clone())));
+        app.session.add_point(egui::pos2(1.0, 1.0));
+
+        app.ask_directory();
+        answer_dialog(&mut app);
+
+        assert_eq!(app.split_dir, out.to_string_lossy());
+        assert!(
+            !out.exists(),
+            "выбор папки не должен создавать её: это делает кнопка «Записать»"
+        );
+    }
+
+    #[test]
+    fn cancelling_changes_nothing() {
+        let mut app = test_app_with(Box::new(Canned::Cancelled));
+        app.open_path = "/tmp/осталось.json".to_owned();
+        app.ask_image();
+        answer_dialog(&mut app);
+
+        assert_eq!(app.open_path, "/tmp/осталось.json");
+        assert!(!app.has_image());
+        assert!(
+            app.session.message().is_none(),
+            "отмена — не ошибка, сообщать о ней незачем"
+        );
+    }
+
+    #[test]
+    fn a_dialog_that_cannot_open_reports_it_and_keeps_the_fields() {
+        let mut app = test_app_with(Box::new(Canned::Failed("нет D-Bus".to_owned())));
+        app.open_path = "/tmp/руками.json".to_owned();
+        app.ask_image();
+        answer_dialog(&mut app);
+
+        let message = app
+            .session
+            .message()
+            .expect("пользователь должен узнать почему");
+        assert!(message.is_error);
+        assert!(message.text.contains("D-Bus"), "{message:?}");
+        assert_eq!(
+            app.open_path, "/tmp/руками.json",
+            "введённый вручную путь должен остаться"
+        );
+    }
+
+    #[test]
+    fn each_picker_suggests_a_sensible_starting_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = test_app();
+
+        app.ask_save();
+        assert_eq!(
+            app.dialogs.pending_request(),
+            Some(&Request::SaveAnnotations { suggested: None })
+        );
+        answer_dialog(&mut app);
+
+        app.json_path = dir.path().join("a.json").to_string_lossy().into_owned();
+        app.ask_save();
+        let Some(Request::SaveAnnotations {
+            suggested: Some(path),
+        }) = app.dialogs.pending_request().cloned()
+        else {
+            panic!("ожидался запрос на сохранение");
+        };
+        assert_eq!(
+            Request::SaveAnnotations {
+                suggested: Some(path.clone())
+            }
+            .start_directory(),
+            Some(dir.path().to_path_buf()),
+            "диалог должен открыться рядом с текущим файлом"
+        );
+        answer_dialog(&mut app);
+
+        app.ask_image();
+        assert!(matches!(
+            app.dialogs.pending_request(),
+            Some(Request::Image { .. })
+        ));
+        answer_dialog(&mut app);
+
+        app.ask_annotations();
+        assert!(matches!(
+            app.dialogs.pending_request(),
+            Some(Request::Annotations { .. })
+        ));
+        answer_dialog(&mut app);
+
+        app.ask_directory();
+        assert!(matches!(
+            app.dialogs.pending_request(),
+            Some(Request::Directory { .. })
+        ));
+    }
+
+    #[test]
+    fn a_second_picker_is_refused_while_one_is_open() {
+        let mut app = test_app_with(Box::new(Canned::Cancelled));
+        app.ask_image();
+        app.ask_save();
+        let message = app
+            .session
+            .message()
+            .expect("нужно сказать, что диалог уже открыт");
+        assert!(message.is_error);
+        assert!(
+            matches!(app.dialogs.pending_request(), Some(Request::Image { .. })),
+            "первый запрос должен выжить"
+        );
     }
 
     #[test]

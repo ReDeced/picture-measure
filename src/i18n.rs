@@ -121,13 +121,21 @@ impl fmt::Display for UnknownLang {
 
 impl std::error::Error for UnknownLang {}
 
-/// Guesses a language from the environment (`LANG`, `LC_ALL`, `LC_MESSAGES`).
+/// Guesses a language from the environment (`LC_ALL`, `LC_MESSAGES`, `LANG`).
+///
+/// Falls back to [`Lang::Ru`]. Only the primary subtag is looked at, so
+/// `en_GB.UTF-8` means English and `ru_RU` means Russian.
 #[must_use]
 pub fn from_environment() -> Lang {
+    from_env_vars(&|key| std::env::var(key).ok())
+}
+
+/// Language detection split out from [`from_environment`] so that it can be
+/// tested without touching the process environment.
+fn from_env_vars(lookup: &dyn Fn(&str) -> Option<String>) -> Lang {
     for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
-        if let Ok(value) = std::env::var(key)
-            && let Some((code, _)) = value.split_once('.')
-            && let Ok(lang) = code.parse()
+        if let Some(value) = lookup(key)
+            && let Ok(lang) = value.parse()
         {
             return lang;
         }
@@ -837,8 +845,62 @@ mod tests {
         assert_eq!(rendered, "Загружено 5 фигур (точек: 2, прямоугольников: 3)");
     }
 
+    /// Строит подставной источник переменных окружения из пар ключ-значение.
+    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let owned: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        move |key: &str| owned.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+    }
+
     #[test]
-    fn language_detection_falls_back_to_russian() {
-        assert_eq!(from_environment(), Lang::Ru);
+    fn detection_prefers_the_first_set_variable() {
+        assert_eq!(
+            from_env_vars(&env(&[
+                ("LC_ALL", "en_US.UTF-8"),
+                ("LC_MESSAGES", "ru_RU.UTF-8"),
+                ("LANG", "en_GB"),
+            ])),
+            Lang::En,
+            "LC_ALL важнее остальных"
+        );
+        assert_eq!(
+            from_env_vars(&env(&[("LC_MESSAGES", "ru_RU.UTF-8"), ("LANG", "en_GB")])),
+            Lang::Ru
+        );
+        assert_eq!(from_env_vars(&env(&[("LANG", "en_GB")])), Lang::En);
+    }
+
+    #[test]
+    fn detection_handles_encodings_and_ignores_unknown() {
+        for (value, want) in [
+            ("en_US.UTF-8", Lang::En),
+            ("ru_RU.UTF-8", Lang::Ru),
+            ("ru", Lang::Ru),
+            ("en_US.utf8@euro", Lang::En),
+            ("en_GB", Lang::En),
+            ("de_DE.UTF-8", Lang::Ru), // не поддерживается → умолчание
+            ("C", Lang::Ru),
+            ("POSIX", Lang::Ru),
+            ("", Lang::Ru),
+        ] {
+            assert_eq!(
+                from_env_vars(&env(&[("LANG", value)])),
+                want,
+                "LANG={value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn detection_falls_back_to_russian() {
+        assert_eq!(from_env_vars(&env(&[])), Lang::Ru);
+    }
+
+    #[test]
+    fn the_real_environment_is_readable() {
+        // Что бы ни было в окружении, вызов обязан вернуть язык, а не упасть.
+        let _ = from_environment();
     }
 }

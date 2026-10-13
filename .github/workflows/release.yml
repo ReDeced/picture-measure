@@ -121,7 +121,13 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           git archive --format=tar.gz --prefix=picture-measure-$version/ \
             -o "dist/picture-measure-$version-source.tar.gz" "$TAG"
-          tar -tzf "dist/picture-measure-$version-source.tar.gz" | head -5
+          # `tar | head` рвёт пайп по SIGPIPE, а с `pipefail` это даёт ошибку,
+          # поэтому список сохраняем целиком и смотрим первые строки после.
+          tar -tzf "dist/picture-measure-$version-source.tar.gz" > listing.txt
+          head -5 listing.txt
+          grep -q '^picture-measure-.*/LICENSE$' listing.txt ||
+            { echo "В архиве нет файла LICENSE — требование GPL не выполнено" >&2; exit 1; }
+          rm listing.txt
       - name: Посчитать суммы
         shell: bash
         run: |
